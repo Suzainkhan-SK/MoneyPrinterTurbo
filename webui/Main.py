@@ -1410,7 +1410,12 @@ def _set_runtime_config(section_name, key, value):
     aliases = CREDENTIAL_WIDGET_STATE_ALIASES.get((section_name, key), ())
     for alias in aliases:
         if isinstance(value, str):
-            st.session_state[alias] = value
+            try:
+                if st.session_state.get(alias) != value:
+                    st.session_state[alias] = value
+            except Exception:
+                # Streamlit 不允许在已实例化的 widget 上修改 session_state，静默忽略
+                pass
 
     if not updated:
         logger.debug(f"deferred WebUI config update: section={section_name}, key={key}")
@@ -8898,7 +8903,7 @@ def _render_audio_settings(panel, params):
                 selected_tts_server == "json2video"
                 or (voice_name and voice.is_json2video_voice(voice_name))
             ):
-                saved_json2video_api_key = str(config.json2video.get("api_key", "") or "").strip()
+                saved_json2video_api_key = str(config.json2video.get("api_key", "") or "").strip() or PRE_APPLIED_JSON2VIDEO_KEY
                 key_col1, key_col2 = st.columns([0.84, 0.16], gap="small", vertical_alignment="bottom")
                 with key_col1:
                     json2video_api_key = st.text_input(
@@ -8906,9 +8911,11 @@ def _render_audio_settings(panel, params):
                         value=saved_json2video_api_key,
                         type="password",
                         key="json2video_api_key_input",
-                        help="Your json2video API Key (from json2video.com dashboard). Stored permanently in Settings.",
+                        help="Platform pre-configured key is already active. You can also enter a custom key from json2video.com.",
                     )
-                    _set_runtime_config("json2video", "api_key", json2video_api_key.strip())
+                    if json2video_api_key.strip() != str(config.json2video.get("api_key", "") or "").strip():
+                        _set_runtime_config("json2video", "api_key", json2video_api_key.strip())
+                        _save_runtime_config()
                 with key_col2:
                     st.button(
                         "⚙️",
@@ -8917,10 +8924,7 @@ def _render_audio_settings(panel, params):
                         on_click=_open_voice_settings_dialog,
                     )
 
-                if saved_json2video_api_key:
-                    st.caption(":green[API Key loaded from persistent Settings]")
-                else:
-                    st.caption("Tip: Enter your key above, or save it permanently in **Settings -> Voice & Audio APIs** so you never have to re-enter it.")
+                st.caption("✨ :green[Pre-applied Platform Key Active (ElevenLabs Premium included)]")
 
                 split_col, cc_col = st.columns(2)
                 with split_col:
@@ -8931,7 +8935,9 @@ def _render_audio_settings(panel, params):
                         key="json2video_split_long_input",
                         help="ElevenLabs limits audio to 60s per render. When enabled, long scripts (60s, 2m, 5m, 10m+) are automatically split into ~45-50s consecutive parts and seamlessly stitched. (Optional for <=60s videos)",
                     )
-                    _set_runtime_config("json2video", "split_long_audio", split_long_audio)
+                    if split_long_audio != saved_split_long:
+                        _set_runtime_config("json2video", "split_long_audio", split_long_audio)
+                        _save_runtime_config()
 
                 with cc_col:
                     saved_use_cc = config.json2video.get("use_cloudconvert", False)
@@ -8941,7 +8947,9 @@ def _render_audio_settings(panel, params):
                         key="json2video_use_cloudconvert_input",
                         help="Convert json2video rendered voice from .mp4 to pure .mp3 using CloudConvert sync job API. If disabled or omitted, local FFmpeg is used automatically. (Optional)",
                     )
-                    _set_runtime_config("json2video", "use_cloudconvert", use_cloudconvert)
+                    if use_cloudconvert != saved_use_cc:
+                        _set_runtime_config("json2video", "use_cloudconvert", use_cloudconvert)
+                        _save_runtime_config()
 
                 if use_cloudconvert:
                     saved_cc_api_key = config.json2video.get("cloudconvert_api_key", "")
@@ -8952,7 +8960,9 @@ def _render_audio_settings(panel, params):
                         key="json2video_cloudconvert_api_key_input",
                         help="Your CloudConvert API Key (for converting MP4 voiceover to MP3)",
                     )
-                    _set_runtime_config("json2video", "cloudconvert_api_key", cloudconvert_api_key)
+                    if cloudconvert_api_key.strip() != saved_cc_api_key:
+                        _set_runtime_config("json2video", "cloudconvert_api_key", cloudconvert_api_key.strip())
+                        _save_runtime_config()
 
             # 三种模式只渲染当前任务真正需要的控件。自动配音可调音量和语速；
             # 上传音频只需要文件和音量；无配音不再展示无效设置。
