@@ -471,6 +471,51 @@ def _load_toml_config(config_path: str):
         raise
 
 
+def _sanitize_config_dict(cfg: dict) -> dict:
+    """Ensure all API keys, secrets, tokens, and personal prompts are completely empty."""
+    app_sec = cfg.setdefault("app", {})
+    # Strip LLM and external service keys
+    for k in [
+        "gemini_api_key", "openai_api_key", "anthropic_api_key", "deepseek_api_key",
+        "qwen_api_key", "azure_api_key", "moonshot_api_key", "shengsuanyun_api_key",
+        "apimart_api_key", "fluxionai_api_key", "cheaperinference_api_key", "grok_api_key",
+        "minimax_api_key", "mimo_api_key", "cloudflare_api_key", "modelscope_api_key",
+        "aihubmix_api_key", "aimlapi_api_key", "evolink_api_key", "openrouter_api_key",
+        "api_route_api_key", "oneapi_api_key", "groq_api_key", "pollinations_api_key",
+        "loomloom_api_token", "volcengine_seedance_api_key", "ofox_api_key", "muapi_api_key",
+        "metaso_minimax_api_key", "sonilo_api_key", "upload_post_api_key", "redis_password"
+    ]:
+        if k in app_sec:
+            app_sec[k] = ""
+
+    # Strip list-based keys
+    app_sec["pexels_api_keys"] = []
+    app_sec["pixabay_api_keys"] = []
+    app_sec["coverr_api_keys"] = []
+    app_sec["wavespeed_api_keys"] = []
+    app_sec["openai_image_api_keys"] = []
+    app_sec["twelvelabs_api_keys"] = []
+
+    # Strip voice / TTS service keys
+    for sec_name in [
+        "azure", "siliconflow", "minimax_tts", "elevenlabs",
+        "chatterbox", "kokoro", "fish_audio", "voxcpm", "json2video"
+    ]:
+        sec = cfg.setdefault(sec_name, {})
+        for key_field in ["api_key", "speech_key", "cloudconvert_api_key"]:
+            if key_field in sec:
+                sec[key_field] = ""
+
+    # Strip personal user prompts so new users get clean input boxes
+    ui_sec = cfg.setdefault("ui", {})
+    ui_sec["video_subject"] = ""
+    ui_sec["video_script"] = ""
+    ui_sec["video_script_prompt"] = ""
+    ui_sec["custom_system_prompt"] = ""
+
+    return cfg
+
+
 def load_config():
     # fix: IsADirectoryError: [Errno 21] Is a directory: '/MoneyPrinterTurbo/config.toml'
     if os.path.isdir(config_file):
@@ -484,7 +529,17 @@ def load_config():
 
     logger.info(f"load config from file: {config_file}")
 
-    return _load_toml_config(config_file)
+    loaded = _load_toml_config(config_file)
+    # Sanitize root template if any legacy test keys leaked
+    legacy_keys = ("AIzaSyC_ozuedo6ueobvhbHDA6OFYa-d4uKDAKo", "wnzipdxV7TGWJQwatBQeOzMRL7LnYHbAJS09rRxwMpvuv89OSrs8B6Um")
+    if any(legacy in str(loaded.get("app", {})) for legacy in legacy_keys):
+        _sanitize_config_dict(loaded)
+        try:
+            with open(config_file, "w", encoding="utf-8") as f:
+                toml.dump(loaded, f)
+        except Exception:
+            pass
+    return loaded
 
 
 def switch_user_config(user_id: str):
@@ -492,23 +547,39 @@ def switch_user_config(user_id: str):
     global config_file
     if not user_id:
         return
-    user_storage = os.path.join(root_dir, "storage", "users", str(user_id).strip())
+    clean_uid = str(user_id).strip()
+    user_storage = os.path.join(root_dir, "storage", "users", clean_uid)
     os.makedirs(user_storage, exist_ok=True)
     user_config = os.path.join(user_storage, "config.toml")
-    # If user doesn't have a config yet, seed it from default config
+
+    # If user doesn't have a config yet, create a clean sanitized config
     if not os.path.isfile(user_config):
         base_template = os.path.join(root_dir, "storage", "config.toml")
         if not os.path.isfile(base_template):
             base_template = os.path.join(root_dir, "config.toml")
-        if os.path.isfile(base_template):
-            try:
-                shutil.copyfile(base_template, user_config)
-            except Exception:
-                pass
+        try:
+            template_cfg = _load_toml_config(base_template) if os.path.isfile(base_template) else {}
+            _sanitize_config_dict(template_cfg)
+            with open(user_config, "w", encoding="utf-8") as f:
+                toml.dump(template_cfg, f)
+        except Exception as e:
+            logger.warning(f"failed to initialize clean user config: {e}")
+
     if os.path.isfile(user_config):
         config_file = user_config
         try:
             new_cfg = _load_toml_config(config_file)
+
+            # Security safeguard: Check if this user config still has legacy leaked test keys
+            legacy_keys = ("AIzaSyC_ozuedo6ueobvhbHDA6OFYa-d4uKDAKo", "wnzipdxV7TGWJQwatBQeOzMRL7LnYHbAJS09rRxwMpvuv89OSrs8B6Um")
+            if any(legacy in str(new_cfg.get("app", {})) for legacy in legacy_keys):
+                _sanitize_config_dict(new_cfg)
+                try:
+                    with open(user_config, "w", encoding="utf-8") as f:
+                        toml.dump(new_cfg, f)
+                except Exception:
+                    pass
+
             _cfg.clear()
             _cfg.update(new_cfg)
             app.clear()
@@ -533,7 +604,7 @@ def switch_user_config(user_id: str):
             json2video.update(new_cfg.get("json2video", {}))
             ui.clear()
             ui.update(new_cfg.get("ui", {"hide_log": False}))
-            logger.info(f"switched to user config: {config_file}")
+            logger.info(f"switched to isolated user config: {config_file}")
         except Exception as e:
             logger.warning(f"failed to load user config {config_file}: {e}")
 

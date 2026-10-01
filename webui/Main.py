@@ -173,8 +173,10 @@ def _verify_bangai_token(token_str: str) -> dict | None:
         return None
 
 
-# 1. Resolve token & theme from query param or session state
+# 1. Resolve token, user & theme from query param or session state
 query_token = st.query_params.get("token", "")
+query_user_id = st.query_params.get("user_id", "") or st.query_params.get("uid", "")
+query_email = st.query_params.get("email", "")
 query_theme = st.query_params.get("theme", "light")
 query_embedded = st.query_params.get("embedded", "0")
 is_embedded = query_embedded in ("1", "true")
@@ -182,26 +184,36 @@ is_embedded = query_embedded in ("1", "true")
 auth_user = None
 if query_token:
     auth_user = _verify_bangai_token(query_token)
+    if not auth_user and query_user_id:
+        auth_user = {
+            "userId": query_user_id,
+            "email": query_email or "creator@bangai.com",
+            "name": query_email.split("@")[0] if query_email else "Creator"
+        }
     if auth_user:
         st.session_state["bangai_auth_user"] = auth_user
         st.session_state["bangai_token"] = query_token
+elif query_user_id:
+    auth_user = {
+        "userId": query_user_id,
+        "email": query_email or "creator@bangai.com",
+        "name": query_email.split("@")[0] if query_email else "Creator"
+    }
+    st.session_state["bangai_auth_user"] = auth_user
 elif "bangai_auth_user" in st.session_state:
     auth_user = st.session_state["bangai_auth_user"]
 
-# Provide seamless access on direct visits (guest creator profile)
+# Provide seamless access on direct visits (unique session guest creator profile)
 if not auth_user:
+    guest_id = st.session_state.setdefault("guest_user_id", f"guest_{uuid4().hex[:8]}")
     auth_user = {
-        "userId": "default_user",
-        "name": "Creator",
-        "email": "creator@bangai.com"
+        "userId": guest_id,
+        "name": "Guest Creator",
+        "email": f"{guest_id}@bangai.com"
     }
 
 # 2. Multi-tenant isolation: isolate user storage & config
-current_uid = (
-    (auth_user.get("userId") or auth_user.get("id"))
-    if auth_user
-    else "default_user"
-)
+current_uid = str(auth_user.get("userId") or auth_user.get("id") or "guest").strip()
 utils.set_current_user_id(current_uid)
 config.switch_user_config(current_uid)
 
@@ -2090,9 +2102,14 @@ def _collect_task_summaries(limit=20):
         logger.warning(f"failed to load runtime tasks: {e}")
         runtime_tasks = []
 
+    active_uid = utils.get_current_user_id()
     for task in runtime_tasks:
         task_id = task.get("task_id", "")
         if not task_id:
+            continue
+        # Multi-tenant isolation: Only display runtime tasks that belong to the active user
+        task_uid = task.get("user_id")
+        if task_uid and active_uid and task_uid != active_uid:
             continue
 
         task_path = os.path.join(utils.task_dir(), task_id)

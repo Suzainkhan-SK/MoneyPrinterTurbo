@@ -11,6 +11,7 @@ from app.services import state as sm
 from app.services import task as tm
 from app.services.loomloom import LoomLoomConfirmedVideoRequest
 from app.utils.logging_utils import format_log_record
+from app.utils import utils
 
 
 # WebUI parallel cloud task manager: 20 concurrent rendering workers, with FIFO queue
@@ -186,6 +187,7 @@ def submit_generation(
             queue_position=pos,
             estimated_wait=est_wait,
             video_subject=task_params.video_subject or task_params.video_script or task_id,
+            user_id=utils.get_current_user_id() or "guest",
         )
     else:
         sm.state.update_task(
@@ -194,6 +196,7 @@ def submit_generation(
             progress=0,
             queue_position=0,
             video_subject=task_params.video_subject or task_params.video_script or task_id,
+            user_id=utils.get_current_user_id() or "guest",
         )
 
     try:

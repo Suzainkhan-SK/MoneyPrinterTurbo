@@ -62,6 +62,42 @@ app = modal.App("bangai-stock-studio")
 def ui():
     import os
     import subprocess
+    import toml
+
+    try:
+        volume.reload()
+        # Sanitize persistent cloud storage config to guarantee zero hardcoded API keys
+        storage_cfg = "/root/storage/config.toml"
+        if os.path.exists(storage_cfg):
+            with open(storage_cfg, "r", encoding="utf-8") as f:
+                c = toml.load(f)
+            app_sec = c.setdefault("app", {})
+            app_sec["gemini_api_key"] = ""
+            app_sec["pexels_api_keys"] = []
+            for k in ["openai_api_key", "anthropic_api_key", "azure_api_key", "deepseek_api_key"]:
+                if k in app_sec:
+                    app_sec[k] = ""
+            with open(storage_cfg, "w", encoding="utf-8") as f:
+                toml.dump(c, f)
+
+        # Also sanitize legacy default_user config if present
+        legacy_cfg = "/root/storage/users/default_user/config.toml"
+        if os.path.exists(legacy_cfg):
+            with open(legacy_cfg, "r", encoding="utf-8") as f:
+                c = toml.load(f)
+            app_sec = c.setdefault("app", {})
+            app_sec["gemini_api_key"] = ""
+            app_sec["pexels_api_keys"] = []
+            for k in ["openai_api_key", "anthropic_api_key", "azure_api_key", "deepseek_api_key"]:
+                if k in app_sec:
+                    app_sec[k] = ""
+            with open(legacy_cfg, "w", encoding="utf-8") as f:
+                toml.dump(c, f)
+
+        volume.commit()
+    except Exception as e:
+        print(f"[modal_app] Volume sanitization note: {e}")
+
     cmd = (
         "streamlit run webui/Main.py "
         "--server.port 8501 "
