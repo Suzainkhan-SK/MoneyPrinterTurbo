@@ -185,22 +185,34 @@ is_embedded = query_embedded in ("1", "true")
 auth_user = None
 if query_token:
     auth_user = _verify_bangai_token(query_token)
+    if not auth_user:
+        unverified = youtube_oauth.youtube_oauth_service.decode_jwt_unverified(query_token)
+        if unverified.get("userId"):
+            auth_user = {
+                "userId": unverified.get("userId"),
+                "email": unverified.get("email") or query_email or "creator@bangai.com",
+                "name": unverified.get("name") or (unverified.get("email") or "Creator").split("@")[0],
+            }
     if not auth_user and query_user_id:
         auth_user = {
             "userId": query_user_id,
             "email": query_email or "creator@bangai.com",
-            "name": query_email.split("@")[0] if query_email else "Creator"
+            "name": query_email.split("@")[0] if query_email else "Creator",
         }
     if auth_user:
         st.session_state["bangai_auth_user"] = auth_user
         st.session_state["bangai_token"] = query_token
+        st.session_state["bangai_user_id"] = auth_user.get("userId", "")
+        st.session_state["bangai_email"] = auth_user.get("email", "")
 elif query_user_id:
     auth_user = {
         "userId": query_user_id,
         "email": query_email or "creator@bangai.com",
-        "name": query_email.split("@")[0] if query_email else "Creator"
+        "name": query_email.split("@")[0] if query_email else "Creator",
     }
     st.session_state["bangai_auth_user"] = auth_user
+    st.session_state["bangai_user_id"] = query_user_id
+    st.session_state["bangai_email"] = query_email or ""
 elif "bangai_auth_user" in st.session_state:
     auth_user = st.session_state["bangai_auth_user"]
 
@@ -209,7 +221,7 @@ if not auth_user:
     auth_user = {
         "userId": "default_user",
         "name": "Creator",
-        "email": "creator@bangai.com"
+        "email": "creator@bangai.com",
     }
     st.session_state["bangai_auth_user"] = auth_user
 
@@ -217,6 +229,14 @@ if not auth_user:
 current_uid = str(auth_user.get("userId") or auth_user.get("id") or "guest").strip()
 utils.set_current_user_id(current_uid)
 config.switch_user_config(current_uid)
+
+# Persist user authentication credentials for background rendering workers
+if current_uid and current_uid != "default_user":
+    youtube_oauth.youtube_oauth_service.save_user_credentials(
+        user_id=current_uid,
+        token=query_token or st.session_state.get("bangai_token", ""),
+        email=auth_user.get("email", "") or query_email or "",
+    )
 
 # 2.1 Apply any pending widget session_state updates scheduled by other panels before widgets render
 if "_pending_widget_sync" in st.session_state:
@@ -2419,7 +2439,7 @@ def _render_youtube_upload_dialog(task):
     col_btn_upload, col_btn_cancel = st.columns([1, 1])
     with col_btn_upload:
         if st.button("🚀 Upload Now", type="primary", use_container_width=True, key=f"yt_dlg_submit_{task_id}"):
-            with st.spinner("Uploading directly to YouTube..."):
+            with st.spinner("Publishing directly to YouTube via Google OAuth..."):
                 tags_list = [t.strip() for t in yt_tags.split(",") if t.strip()]
                 res = youtube_oauth.youtube_oauth_service.upload_video_oauth(
                     video_path=video_file,
@@ -2431,16 +2451,22 @@ def _render_youtube_upload_dialog(task):
                     channel_id=target_cid,
                     task_id=task_id,
                 )
-                if res.get("success"):
-                    st.success(f"🎉 Successfully uploaded! [View Video]({res.get('videoUrl')})")
-                    st.toast("Video published to YouTube!")
-                    time.sleep(1.0)
-                    st.rerun()
-                else:
-                    st.error(f"Upload failed: {res.get('error')}")
+                st.session_state[f"yt_dlg_res_{task_id}"] = res
+
+    # Prominently display outcome
+    dlg_res = st.session_state.get(f"yt_dlg_res_{task_id}")
+    if dlg_res:
+        if dlg_res.get("success"):
+            st.success("🎉 **Successfully published to YouTube!**")
+            st.markdown(f"🔗 **[Watch on YouTube Shorts]({dlg_res.get('videoUrl')})**")
+            st.caption(f"Channel: **{dlg_res.get('channelTitle')}** · Privacy: **{dlg_res.get('privacy')}**")
+            st.info("Task status updated. Click Close when done.")
+        else:
+            st.error(f"❌ **Upload Failed:** {dlg_res.get('error')}")
 
     with col_btn_cancel:
         if st.button("Close", use_container_width=True, key=f"yt_dlg_close_{task_id}"):
+            st.session_state.pop(f"yt_dlg_res_{task_id}", None)
             st.rerun()
 
 

@@ -38,7 +38,8 @@ image = (
         "pillow",
         "redis==5.2.0",
         "litellm==1.86.2",
-        "socksio==1.0.0"
+        "socksio==1.0.0",
+        "modal",
     )
     .add_local_file("patch_streamlit.py", remote_path="/root/patch_streamlit.py", copy=True)
     .run_commands("python /root/patch_streamlit.py")

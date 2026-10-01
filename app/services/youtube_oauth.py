@@ -6,13 +6,17 @@ Features:
 - Supports multi-channel selection (same as BangAI website).
 - Direct Google Resumable Upload streaming from local/cloud disk without third-party fees.
 - Dual-mode support: Manual Review Upload (from Task Manager) and Automatic Upload (post-render).
+- Decodes JWT tokens to extract real BangAI user identities even on direct full-window visits.
 - Coexists seamlessly alongside Upload-Post.
 """
 
 import os
 import re
 import json
+import base64
+import glob
 import requests
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 from loguru import logger
 from app.config import config
@@ -26,70 +30,204 @@ class YouTubeOAuthService:
     def __init__(self):
         self._channels_cache = {}
 
-    def get_user_credentials(self) -> Dict[str, str]:
-        """Resolve active user ID, email, and JWT token from session or environment."""
-        import streamlit as st
+    @staticmethod
+    def decode_jwt_unverified(token_str: str) -> Dict[str, Any]:
+        """Decode unverified JWT payload to extract user ID and email."""
+        if not token_str or not isinstance(token_str, str):
+            return {}
+        parts = token_str.strip().split(".")
+        if len(parts) < 2:
+            return {}
+        try:
+            payload_b64 = parts[1]
+            padding = 4 - (len(payload_b64) % 4)
+            padded = payload_b64 + ("=" * (padding % 4))
+            raw = base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8")
+            data = json.loads(raw)
+            return {
+                "userId": data.get("userId") or data.get("id") or data.get("uid") or "",
+                "email": data.get("email") or "",
+                "name": data.get("name") or "",
+            }
+        except Exception:
+            return {}
+
+    def is_configured(self) -> bool:
+        """Check if YouTube OAuth is enabled and configured with connected channels."""
+        try:
+            cfg = getattr(config, "youtube_oauth", {})
+            if not cfg.get("enabled", True):
+                return False
+            channels = self.fetch_connected_channels()
+            return len(channels) > 0
+        except Exception as e:
+            logger.debug(f"[YouTube OAuth] is_configured check: {e}")
+            return False
+
+    @property
+    def auto_upload(self) -> bool:
+        """Check if auto-upload mode is active."""
+        try:
+            cfg = getattr(config, "youtube_oauth", {})
+            mode = str(cfg.get("upload_mode", "manual")).lower()
+            return bool(cfg.get("auto_upload", False) or mode in ("auto", "automatic"))
+        except Exception:
+            return False
+
+    @property
+    def default_privacy_status(self) -> str:
+        """Default privacy status for uploaded videos (public, unlisted, private)."""
+        try:
+            cfg = getattr(config, "youtube_oauth", {})
+            return str(cfg.get("default_privacy_status", "public")).lower()
+        except Exception:
+            return "public"
+
+    @property
+    def made_for_kids(self) -> bool:
+        """Self declared made for kids flag."""
+        try:
+            cfg = getattr(config, "youtube_oauth", {})
+            return bool(cfg.get("made_for_kids", False))
+        except Exception:
+            return False
+
+    @property
+    def selected_channel_id(self) -> str:
+        """Selected YouTube Channel ID."""
+        try:
+            cfg = getattr(config, "youtube_oauth", {})
+            cid = cfg.get("selected_channel_id", "")
+            if not cid:
+                channels = self.fetch_connected_channels()
+                if channels:
+                    default_ch = next((c for c in channels if c.get("isDefault")), channels[0])
+                    cid = default_ch.get("channelId", "")
+            return cid
+        except Exception:
+            return ""
+
+    def get_user_credentials(
+        self, user_id: Optional[str] = None, task_id: Optional[str] = None
+    ) -> Dict[str, str]:
+        """Resolve active user ID, email, and JWT token from session, task, disk or environment."""
         token = ""
-        user_id = ""
+        resolved_uid = str(user_id or "").strip()
         email = ""
 
-        try:
-            # 1. Check Streamlit query params
-            params = st.query_params
-            token = params.get("token", "") or ""
-            user_id = params.get("user_id", "") or ""
-            email = params.get("email", "") or ""
-        except Exception:
-            pass
+        # 1. If task_id provided, deduce user ID from task storage directory
+        if not resolved_uid and task_id:
+            matches = glob.glob(f"storage/users/*/tasks/{task_id}") + glob.glob(
+                f"/root/storage/users/*/tasks/{task_id}"
+            )
+            if matches:
+                norm = matches[0].replace("\\", "/")
+                parts = norm.split("/")
+                if "users" in parts:
+                    idx = parts.index("users")
+                    if idx + 1 < len(parts):
+                        candidate = parts[idx + 1].strip()
+                        if candidate and candidate not in ("guest", "default_user"):
+                            resolved_uid = candidate
 
-        # 2. Check session state fallback
+        # 2. Check Streamlit context safely if available
         try:
+            import streamlit as st
+            params = st.query_params
+            token = params.get("token", "") or token
+            if not resolved_uid or resolved_uid in ("guest", "default_user"):
+                resolved_uid = params.get("user_id", "") or params.get("uid", "") or ""
+            email = params.get("email", "") or email
+
+            # Check session state
             token = token or st.session_state.get("bangai_token", "") or ""
-            user_id = user_id or st.session_state.get("bangai_user_id", "") or ""
+            if not resolved_uid or resolved_uid in ("guest", "default_user"):
+                resolved_uid = st.session_state.get("bangai_user_id", "") or ""
             email = email or st.session_state.get("bangai_email", "") or ""
         except Exception:
             pass
 
-        # 3. Check active config user ID fallback
-        if not user_id:
+        # 3. If token present, decode unverified JWT payload to extract userId and email
+        if token:
+            jwt_data = self.decode_jwt_unverified(token)
+            if not resolved_uid or resolved_uid in ("guest", "default_user"):
+                resolved_uid = jwt_data.get("userId") or resolved_uid
+            if not email:
+                email = jwt_data.get("email") or email
+
+        # 4. Fallback to active config user ID
+        if not resolved_uid or resolved_uid in ("guest", "default_user"):
             try:
                 from app.config.config import get_active_user_id
-                user_id = get_active_user_id()
+                active_c = get_active_user_id()
+                if active_c and active_c not in ("guest", "default_user"):
+                    resolved_uid = active_c
             except Exception:
                 pass
 
+        # 5. Check persisted user auth file on disk if user_id known
+        if resolved_uid and resolved_uid not in ("guest", "default_user"):
+            for base_dir in ["storage", "/root/storage"]:
+                auth_file = os.path.join(base_dir, "users", resolved_uid, "auth.json")
+                if os.path.isfile(auth_file):
+                    try:
+                        with open(auth_file, "r", encoding="utf-8") as f:
+                            disk_auth = json.load(f)
+                        token = token or disk_auth.get("token", "")
+                        email = email or disk_auth.get("email", "")
+                        break
+                    except Exception:
+                        pass
+
         return {
             "token": str(token).strip(),
-            "user_id": str(user_id).strip(),
+            "user_id": str(resolved_uid).strip(),
             "email": str(email).strip().lower(),
         }
 
-    def fetch_connected_channels(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+    def save_user_credentials(self, user_id: str, token: str = "", email: str = ""):
+        """Persist user auth to disk so background render tasks can access it without Streamlit context."""
+        clean_uid = str(user_id).strip()
+        if not clean_uid or clean_uid in ("default_user", "guest"):
+            return
+        for base_path in ["storage", "/root/storage"]:
+            user_dir = os.path.join(base_path, "users", clean_uid)
+            if os.path.isdir(user_dir):
+                auth_file = os.path.join(user_dir, "auth.json")
+                try:
+                    with open(auth_file, "w", encoding="utf-8") as f:
+                        json.dump({"token": token, "email": email, "userId": clean_uid}, f, indent=2)
+                except Exception as ex:
+                    logger.debug(f"[YouTube OAuth] Could not save {auth_file}: {ex}")
+
+    def fetch_connected_channels(
+        self, force_refresh: bool = False, user_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Fetch the list of connected YouTube channels for the current user from BangAI.
         Returns list of channel dicts with channelId, channelTitle, avatarUrl, isDefault, etc.
         """
-        creds = self.get_user_credentials()
+        creds = self.get_user_credentials(user_id=user_id)
         token = creds.get("token")
-        user_id = creds.get("user_id")
+        uid = creds.get("user_id")
         email = creds.get("email")
 
-        cache_key = f"{user_id}_{email}_{token[:10] if token else ''}"
+        cache_key = f"{uid}_{email}_{token[:10] if token else ''}"
         if not force_refresh and cache_key in self._channels_cache:
             return self._channels_cache[cache_key]
 
-        if not token and not user_id and not email:
+        if not token and not uid and not email:
             logger.debug("[YouTube OAuth] No active user credentials found for channel discovery")
             return []
 
-        url = f"{BANGAI_API_BASE}/google-oauth?action=list"
+        url = f"{BANGAI_API_BASE}/google-oauth"
         headers = {}
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
-        params = {}
-        if user_id:
-            params["userId"] = user_id
+        params = {"action": "list"}
+        if uid and uid not in ("guest", "default_user"):
+            params["userId"] = uid
         if email:
             params["email"] = email
         if token:
@@ -101,34 +239,43 @@ class YouTubeOAuthService:
                 data = res.json()
                 channels = data.get("channels", [])
                 self._channels_cache[cache_key] = channels
-                logger.info(f"[YouTube OAuth] Discovered {len(channels)} connected channel(s) for user {user_id or email}")
+                logger.info(
+                    f"[YouTube OAuth] Discovered {len(channels)} connected channel(s) for user {uid or email}"
+                )
                 return channels
             else:
-                logger.warning(f"[YouTube OAuth] Channel lookup returned HTTP {res.status_code}: {res.text[:200]}")
+                logger.warning(
+                    f"[YouTube OAuth] Channel lookup returned HTTP {res.status_code}: {res.text[:200]}"
+                )
         except Exception as e:
             logger.warning(f"[YouTube OAuth] Failed to query connected channels: {e}")
 
         return []
 
-    def get_channel_token(self, channel_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get_channel_token(
+        self,
+        channel_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
         Obtain a fresh Google OAuth access token for the specified channel ID (or default channel).
         """
-        creds = self.get_user_credentials()
+        creds = self.get_user_credentials(user_id=user_id, task_id=task_id)
         token = creds.get("token")
-        user_id = creds.get("user_id")
+        uid = creds.get("user_id")
         email = creds.get("email")
 
-        url = f"{BANGAI_API_BASE}/google-oauth?action=get-token"
+        url = f"{BANGAI_API_BASE}/google-oauth"
         headers = {}
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
-        params = {}
+        params = {"action": "get-token"}
         if channel_id:
             params["channelId"] = channel_id
-        if user_id:
-            params["userId"] = user_id
+        if uid and uid not in ("guest", "default_user"):
+            params["userId"] = uid
         if email:
             params["email"] = email
         if token:
@@ -139,7 +286,13 @@ class YouTubeOAuthService:
             if res.ok:
                 return res.json()
             else:
-                logger.error(f"[YouTube OAuth] Failed to get channel token: HTTP {res.status_code} {res.text[:200]}")
+                logger.error(
+                    f"[YouTube OAuth] Failed to get channel token: HTTP {res.status_code} {res.text[:200]}"
+                )
+                try:
+                    return res.json()
+                except Exception:
+                    return {"success": False, "error": f"HTTP {res.status_code}: {res.text[:100]}"}
         except Exception as e:
             logger.error(f"[YouTube OAuth] Exception fetching channel token: {e}")
 
@@ -155,26 +308,43 @@ class YouTubeOAuthService:
         made_for_kids: bool = False,
         channel_id: Optional[str] = None,
         task_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Directly upload video to YouTube via official Google Resumable Upload protocol.
         """
-        if not os.path.exists(video_path):
-            error_msg = f"Video file not found: {video_path}"
-            logger.error(f"[YouTube OAuth] {error_msg}")
-            return {"success": False, "error": error_msg}
+        # Resolve real path
+        resolved_video_path = video_path
+        if not resolved_video_path or not os.path.exists(resolved_video_path):
+            candidates = [
+                os.path.abspath(video_path or ""),
+                os.path.join("/root", (video_path or "").lstrip("./")),
+                os.path.join(".", (video_path or "").lstrip("./")),
+            ]
+            found = False
+            for c in candidates:
+                if c and os.path.isfile(c):
+                    resolved_video_path = c
+                    found = True
+                    break
+            if not found:
+                error_msg = f"Video file not found: {video_path}"
+                logger.error(f"[YouTube OAuth] {error_msg}")
+                return {"success": False, "error": error_msg}
 
-        file_size = os.path.getsize(video_path)
+        file_size = os.path.getsize(resolved_video_path)
         if file_size <= 0:
-            error_msg = f"Video file is empty (0 bytes): {video_path}"
+            error_msg = f"Video file is empty (0 bytes): {resolved_video_path}"
             logger.error(f"[YouTube OAuth] {error_msg}")
             return {"success": False, "error": error_msg}
 
         # 1. Fetch fresh access token
-        token_info = self.get_channel_token(channel_id)
+        token_info = self.get_channel_token(
+            channel_id=channel_id, user_id=user_id, task_id=task_id
+        )
         if not token_info or not token_info.get("accessToken"):
             error_msg = (
-                token_info.get("message")
+                token_info.get("message") or token_info.get("error")
                 if token_info
                 else "No valid YouTube OAuth token found. Please connect your channel in BangAI Profile."
             )
@@ -193,11 +363,19 @@ class YouTubeOAuthService:
         else:
             clean_desc = base_desc
 
-        clean_tags = [str(t).replace("<", "").replace(">", "").strip() for t in (tags or []) if str(t).strip()]
+        clean_tags = [
+            str(t).replace("<", "").replace(">", "").strip()
+            for t in (tags or [])
+            if str(t).strip()
+        ]
         if not clean_tags:
             clean_tags = ["Shorts", "AI", "BangAI"]
 
-        valid_privacy = privacy_status.lower() if privacy_status.lower() in ["public", "private", "unlisted"] else "public"
+        valid_privacy = (
+            privacy_status.lower()
+            if privacy_status.lower() in ["public", "private", "unlisted"]
+            else "public"
+        )
 
         metadata = {
             "snippet": {
@@ -205,7 +383,6 @@ class YouTubeOAuthService:
                 "description": clean_desc,
                 "tags": clean_tags[:30],
                 "categoryId": "24",
-                "defaultLanguage": "en",
             },
             "status": {
                 "privacyStatus": valid_privacy,
@@ -215,7 +392,10 @@ class YouTubeOAuthService:
             },
         }
 
-        logger.info(f"[YouTube OAuth] Initiating Resumable Upload for '{clean_title}' ({file_size} bytes) to channel '{channel_title}' ({valid_privacy})")
+        logger.info(
+            f"[YouTube OAuth] Initiating Resumable Upload for '{clean_title}' "
+            f"({file_size} bytes) to channel '{channel_title}' ({valid_privacy})"
+        )
 
         init_headers = {
             "Authorization": f"Bearer {access_token}",
@@ -224,33 +404,49 @@ class YouTubeOAuthService:
             "X-Upload-Content-Length": str(file_size),
         }
 
-        init_url = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status"
+        init_url = (
+            "https://www.googleapis.com/upload/youtube/v3/videos"
+            "?uploadType=resumable&part=snippet,status"
+        )
         try:
-            init_res = requests.post(init_url, headers=init_headers, json=metadata, timeout=30)
+            init_res = requests.post(
+                init_url, headers=init_headers, json=metadata, timeout=30
+            )
             if not init_res.ok:
-                err_text = init_res.text[:300]
-                logger.error(f"[YouTube OAuth] Init failed (HTTP {init_res.status_code}): {err_text}")
+                err_text = init_res.text[:400]
+                logger.error(
+                    f"[YouTube OAuth] Init failed (HTTP {init_res.status_code}): {err_text}"
+                )
                 return {
                     "success": False,
-                    "error": f"YouTube API rejected initialization: {err_text}",
+                    "error": f"YouTube API rejected initialization ({init_res.status_code}): {err_text}",
                     "status_code": init_res.status_code,
                 }
 
             upload_url = init_res.headers.get("Location")
             if not upload_url:
-                return {"success": False, "error": "YouTube API did not return upload location URL"}
+                return {
+                    "success": False,
+                    "error": "YouTube API did not return upload location URL",
+                }
 
-            logger.info("[YouTube OAuth] Session URL received. Streaming video binary buffer to Google...")
+            logger.info(
+                f"[YouTube OAuth] Upload session created. Streaming {file_size} bytes to Google..."
+            )
 
             # 3. Stream binary video directly to Google Resumable Upload URI
+            with open(resolved_video_path, "rb") as vf:
+                video_bytes = vf.read()
+
             stream_headers = {
                 "Content-Type": "video/mp4",
-                "Content-Length": str(file_size),
-                "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
+                "Content-Length": str(len(video_bytes)),
+                "Content-Range": f"bytes 0-{len(video_bytes) - 1}/{len(video_bytes)}",
             }
 
-            with open(video_path, "rb") as video_file:
-                put_res = requests.put(upload_url, headers=stream_headers, data=video_file, timeout=600)
+            put_res = requests.put(
+                upload_url, headers=stream_headers, data=video_bytes, timeout=600
+            )
 
             video_id = None
             if put_res.status_code in (200, 201):
@@ -261,19 +457,32 @@ class YouTubeOAuthService:
                 logger.warning("[YouTube OAuth] Received HTTP 308, verifying completion...")
                 status_res = requests.put(
                     upload_url,
-                    headers={"Content-Length": "0", "Content-Range": f"bytes */{file_size}"},
+                    headers={
+                        "Content-Length": "0",
+                        "Content-Range": f"bytes */{len(video_bytes)}",
+                    },
                     timeout=15,
                 )
                 if status_res.status_code in (200, 201):
                     video_id = status_res.json().get("id")
 
             if not video_id:
-                err_body = put_res.text[:300] if hasattr(put_res, "text") else "Unknown error"
-                logger.error(f"[YouTube OAuth] Upload finished without video ID: HTTP {put_res.status_code} {err_body}")
-                return {"success": False, "error": f"Upload streaming failed: {err_body}"}
+                err_body = (
+                    put_res.text[:400] if hasattr(put_res, "text") else "Unknown error"
+                )
+                logger.error(
+                    f"[YouTube OAuth] Upload finished without video ID: "
+                    f"HTTP {put_res.status_code} {err_body}"
+                )
+                return {
+                    "success": False,
+                    "error": f"Upload streaming failed: {err_body}",
+                }
 
             youtube_url = f"https://youtube.com/shorts/{video_id}"
-            logger.success(f"[YouTube OAuth] 🎉 Video successfully published to YouTube! URL: {youtube_url}")
+            logger.success(
+                f"[YouTube OAuth] 🎉 Video successfully published to YouTube! URL: {youtube_url}"
+            )
 
             # 4. Save to task state if task_id provided
             if task_id:
@@ -285,6 +494,16 @@ class YouTubeOAuthService:
                     channel_id=target_channel_id,
                     privacy_status=valid_privacy,
                 )
+                try:
+                    from app.services import state as sm
+                    sm.state.patch_task(
+                        task_id,
+                        youtube_url=youtube_url,
+                        youtube_channel_title=channel_title,
+                        youtube_status="uploaded",
+                    )
+                except Exception:
+                    pass
 
             return {
                 "success": True,
@@ -309,16 +528,13 @@ class YouTubeOAuthService:
         privacy_status: str,
     ):
         """Update task's state.json so Task Manager permanently displays the published YouTube status."""
-        import glob
-        from datetime import datetime
-
-        # Find task directory
         possible_dirs = [
             f"storage/tasks/{task_id}",
             f"/root/storage/tasks/{task_id}",
         ]
-        # Also check multi-tenant user paths
-        matches = glob.glob(f"storage/users/*/tasks/{task_id}") + glob.glob(f"/root/storage/users/*/tasks/{task_id}")
+        matches = glob.glob(f"storage/users/*/tasks/{task_id}") + glob.glob(
+            f"/root/storage/users/*/tasks/{task_id}"
+        )
         possible_dirs.extend(matches)
 
         for tdir in possible_dirs:
