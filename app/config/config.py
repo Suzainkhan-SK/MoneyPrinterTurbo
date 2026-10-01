@@ -632,6 +632,14 @@ def switch_user_config(user_id: str):
                 _cfg.setdefault("json2video", {})["api_key"] = json2video["api_key"]
             ui.clear()
             ui.update(new_cfg.get("ui", {"hide_log": False}))
+            youtube_oauth.clear()
+            youtube_oauth.update(new_cfg.get("youtube_oauth", {
+                "enabled": True,
+                "upload_mode": "manual",
+                "selected_channel_id": "",
+                "default_privacy_status": "public",
+                "made_for_kids": False,
+            }))
             logger.info(f"switched to isolated user config: {config_file}")
         except Exception as e:
             logger.warning(f"failed to load user config {config_file}: {e}")
@@ -736,6 +744,18 @@ ui = _SynchronizedConfig(
         "ui",
         {
             "hide_log": False,
+        },
+    )
+)
+youtube_oauth = _SynchronizedConfig(
+    _cfg.get(
+        "youtube_oauth",
+        {
+            "enabled": True,
+            "upload_mode": "manual",
+            "selected_channel_id": "",
+            "default_privacy_status": "public",
+            "made_for_kids": False,
         },
     )
 )

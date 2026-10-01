@@ -32,7 +32,7 @@ from app.services import (
     volcengine_seedance,
     voice,
 )
-from app.services import upload_post
+from app.services import upload_post, youtube_oauth
 from app.services import state as sm
 from app.utils import file_security, utils
 
@@ -1675,6 +1675,50 @@ def _run_pipeline(
     sm.state.update_task(
         task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs
     )
+
+    # 8. Check BangAI Google OAuth auto-upload
+    try:
+        if (
+            youtube_oauth.youtube_oauth_service.is_configured()
+            and youtube_oauth.youtube_oauth_service.auto_upload
+            and final_video_paths
+        ):
+            target_vid = final_video_paths[0]
+            logger.info(f"Auto-uploading task {task_id} to YouTube via Google OAuth...")
+            _title = (params.video_subject or "AI Generated Video")[:100]
+            _desc = video_script or ""
+            _raw_terms = params.video_terms or ""
+            if isinstance(_raw_terms, str):
+                _tags = [t.strip() for t in _raw_terms.split(",") if t.strip()]
+            else:
+                _tags = list(_raw_terms)
+            _priv = youtube_oauth.youtube_oauth_service.default_privacy_status
+            _mfk = youtube_oauth.youtube_oauth_service.made_for_kids
+            _cid = youtube_oauth.youtube_oauth_service.selected_channel_id
+
+            yt_res = youtube_oauth.youtube_oauth_service.upload_video_oauth(
+                video_path=target_vid,
+                title=_title,
+                description=_desc,
+                tags=_tags,
+                privacy_status=_priv,
+                made_for_kids=_mfk,
+                channel_id=_cid,
+                task_id=task_id,
+            )
+            if yt_res.get("success"):
+                kwargs["youtube_url"] = yt_res.get("videoUrl")
+                kwargs["youtube_channel_title"] = yt_res.get("channelTitle")
+                sm.state.update_task(
+                    task_id,
+                    youtube_url=yt_res.get("videoUrl"),
+                    youtube_channel_title=yt_res.get("channelTitle"),
+                )
+                logger.success(f"Task {task_id} auto-uploaded to YouTube: {yt_res.get('videoUrl')}")
+            else:
+                logger.warning(f"Task {task_id} auto-upload to YouTube failed: {yt_res.get('error')}")
+    except Exception as e:
+        logger.error(f"Error executing YouTube Google OAuth auto-upload: {e}")
 
     if should_cross_post:
         scheduling_error = _schedule_cross_post(

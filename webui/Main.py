@@ -57,6 +57,7 @@ from app.services import (
     volcengine_seedance,
     voice,
     webui_task,
+    youtube_oauth,
 )
 from app.services import elevenlabs_music as elevenlabs_music_service
 from app.services import sonilo as sonilo_service
@@ -1339,6 +1340,7 @@ _RUNTIME_CONFIG_SECTIONS = {
     "voxcpm": config.voxcpm,
     "json2video": config.json2video,
     "ui": config.ui,
+    "youtube_oauth": config.youtube_oauth,
 }
 # 设置预设与密钥备份使用各自的文件标识。导入时先校验 schema 和版本，
 # 避免把任务记录、config.toml 或其它 JSON 误当成本功能的导出文件。
@@ -1384,7 +1386,8 @@ CREDENTIAL_COMPANION_KEYS = {
 }
 
 NON_LLM_COMPANION_KEYS = {
-    "app": ("upload_post_username",)
+    "app": ("upload_post_username",),
+    "youtube_oauth": ("selected_channel_id", "default_privacy_status", "upload_mode"),
 }
 # 同一个密钥在不同面板可能使用各自的控件 key：音频面板直接编辑 Gemini 和
 # MiMo 的 LLM 密钥。恢复备份时必须清除每一个别名，否则遗留的旧值
@@ -2103,6 +2106,15 @@ def _scan_history_tasks(limit=30):
             or script_data.get("script", "")[:40]
             or name
         )
+        state_data = {}
+        state_file = os.path.join(task_path, "state.json")
+        if os.path.isfile(state_file):
+            try:
+                with open(state_file, "r", encoding="utf-8") as sf:
+                    state_data = json.load(sf)
+            except Exception:
+                pass
+
         tasks.append(
             {
                 "task_id": name,
@@ -2113,6 +2125,8 @@ def _scan_history_tasks(limit=30):
                 "task_path": task_path,
                 "video_file": video_file,
                 "source": "history",
+                "youtube_url": state_data.get("youtube_url", ""),
+                "youtube_channel_title": state_data.get("youtube_channel_title", ""),
             }
         )
 
@@ -2163,6 +2177,8 @@ def _collect_task_summaries(limit=20):
             "task_path": task_path,
             "video_file": video_file,
             "source": "runtime",
+            "youtube_url": task.get("youtube_url") or history_task.get("youtube_url", ""),
+            "youtube_channel_title": task.get("youtube_channel_title") or history_task.get("youtube_channel_title", ""),
         }
 
     for task_id, active_task in _active_generation_tasks().items():
@@ -2322,9 +2338,115 @@ def _build_video_download_name(subject, index, total):
     return f"{safe_subject}{suffix}.mp4"
 
 
+@st.dialog(tr("Upload to YouTube"), width="large")
+def _render_youtube_upload_dialog(task):
+    task_id = task["task_id"]
+    subject = task.get("subject", task_id)
+    video_file = task.get("video_file", "")
+    task_path = task.get("task_path", "")
+
+    st.markdown(f"### 🎬 {tr('Upload to YouTube')}")
+    st.caption(f"Task ID: `{task_id}` · Subject: **{subject}**")
+
+    # 1. Preview Player
+    if video_file and os.path.isfile(video_file):
+        st.video(video_file)
+    else:
+        st.error("Video file is missing or not yet generated.")
+        return
+
+    # 2. Channel Selector
+    channels = youtube_oauth.youtube_oauth_service.fetch_connected_channels()
+    if not channels:
+        st.warning("⚠️ No connected YouTube channels found for your account.")
+        st.info("Please connect your YouTube channel in your [BangAI Profile](https://bangai.netlify.app/#/profile). Once connected, return here and click refresh.")
+        if st.button("🔄 Refresh Channels", key=f"yt_dlg_refresh_{task_id}"):
+            youtube_oauth.youtube_oauth_service.fetch_connected_channels(force_refresh=True)
+            st.rerun()
+        return
+
+    channel_ids = [c["channelId"] for c in channels]
+    saved_cid = config.youtube_oauth.get("selected_channel_id", "")
+    if not saved_cid or saved_cid not in channel_ids:
+        default_ch = next((c for c in channels if c.get("isDefault")), channels[0])
+        saved_cid = default_ch["channelId"]
+
+    def _dlg_ch_format(cid):
+        for c in channels:
+            if c["channelId"] == cid:
+                t = c.get("channelTitle", "Channel")
+                s = c.get("subscriberCount", "0")
+                d = " ★ [Default]" if c.get("isDefault") else ""
+                w = " ⚠️ (Expired)" if c.get("needsReconnect") else ""
+                return f"{t} ({s} subs){d}{w}"
+        return cid
+
+    target_cid = st.selectbox(
+        "Target YouTube Channel",
+        options=channel_ids,
+        index=channel_ids.index(saved_cid) if saved_cid in channel_ids else 0,
+        format_func=_dlg_ch_format,
+        key=f"yt_dlg_channel_{task_id}",
+    )
+
+    # 3. Editable Fields
+    script_data = _safe_load_task_script(task_path)
+    params_data = script_data.get("params", {}) if script_data else {}
+    initial_title = params_data.get("video_subject") or subject or "AI Generated Video"
+    initial_desc = script_data.get("script", "") if script_data else ""
+    initial_terms = params_data.get("video_terms", "") or ""
+    if isinstance(initial_terms, list):
+        initial_terms = ", ".join(initial_terms)
+
+    yt_title = st.text_input("Title (max 100 characters)", value=initial_title[:100], max_chars=100, key=f"yt_dlg_inp_title_{task_id}")
+    yt_desc = st.text_area("Description (automatic #Shorts tag will be appended)", value=initial_desc, height=100, key=f"yt_dlg_inp_desc_{task_id}")
+    yt_tags = st.text_input("Tags (comma separated)", value=initial_terms, key=f"yt_dlg_inp_tags_{task_id}")
+
+    col_p, col_k = st.columns(2)
+    with col_p:
+        saved_p = config.youtube_oauth.get("default_privacy_status", "public")
+        p_opts = ["public", "unlisted", "private"]
+        yt_privacy = st.selectbox(
+            "Privacy",
+            options=p_opts,
+            index=p_opts.index(saved_p) if saved_p in p_opts else 0,
+            key=f"yt_dlg_inp_privacy_{task_id}",
+        )
+    with col_k:
+        saved_k = config.youtube_oauth.get("made_for_kids", False)
+        yt_kids = st.checkbox("Made for Kids", value=saved_k, key=f"yt_dlg_inp_kids_{task_id}")
+
+    col_btn_upload, col_btn_cancel = st.columns([1, 1])
+    with col_btn_upload:
+        if st.button("🚀 Upload Now", type="primary", use_container_width=True, key=f"yt_dlg_submit_{task_id}"):
+            with st.spinner("Uploading directly to YouTube..."):
+                tags_list = [t.strip() for t in yt_tags.split(",") if t.strip()]
+                res = youtube_oauth.youtube_oauth_service.upload_video_oauth(
+                    video_path=video_file,
+                    title=yt_title,
+                    description=yt_desc,
+                    tags=tags_list,
+                    privacy_status=yt_privacy,
+                    made_for_kids=yt_kids,
+                    channel_id=target_cid,
+                    task_id=task_id,
+                )
+                if res.get("success"):
+                    st.success(f"🎉 Successfully uploaded! [View Video]({res.get('videoUrl')})")
+                    st.toast("Video published to YouTube!")
+                    time.sleep(1.0)
+                    st.rerun()
+                else:
+                    st.error(f"Upload failed: {res.get('error')}")
+
+    with col_btn_cancel:
+        if st.button("Close", use_container_width=True, key=f"yt_dlg_close_{task_id}"):
+            st.rerun()
+
+
 def _render_task_table(filtered_tasks, key_prefix):
     with st.container(key=f"task_table_header_{key_prefix}"):
-        header_cols = st.columns([1.0, 1.4, 2.7, 0.7, 2.2], vertical_alignment="center")
+        header_cols = st.columns([0.9, 1.3, 2.3, 0.6, 2.9], vertical_alignment="center")
         header_cols[0].caption(tr("Task Status"))
         header_cols[1].caption(tr("Task Updated At"))
         header_cols[2].caption(tr("Task Subject"))
@@ -2349,13 +2471,11 @@ def _render_task_table(filtered_tasks, key_prefix):
             safe_task_key = "".join(ch if ch.isalnum() else "_" for ch in task_id)[:40]
 
             # 使用 Streamlit 原生 bordered container + columns 保留每行操作。
-            # 相比自定义 HTML/CSS 表格，这种方式对 Streamlit 版本变更更稳；
-            # 相比 dataframe，又能保留播放、打开目录、删除等行内动作。
             with st.container(
                 key=f"task_row_{key_prefix}_{safe_task_key}", border=True
             ):
                 row_cols = st.columns(
-                    [1.0, 1.4, 2.7, 0.7, 2.2],
+                    [0.9, 1.3, 2.3, 0.6, 2.9],
                     vertical_alignment="center",
                 )
                 row_cols[0].write(_task_state_label(task["state"], has_video))
@@ -2364,7 +2484,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                 row_cols[3].write(f"{task['progress']}%")
 
                 action_cols = row_cols[4].columns(
-                    5,
+                    6,
                     vertical_alignment="center",
                     gap="small",
                 )
@@ -2431,6 +2551,28 @@ def _render_task_table(filtered_tasks, key_prefix):
                         )
 
                 with action_cols[3]:
+                    yt_url = task.get("youtube_url")
+                    if yt_url:
+                        st.link_button(
+                            "Shorts",
+                            yt_url,
+                            key=f"link_yt_{key_prefix}_{task_id}",
+                            use_container_width=True,
+                            icon=":material/smart_display:",
+                            help=f"Published on YouTube: {yt_url}",
+                        )
+                    else:
+                        if st.button(
+                            "Upload",
+                            key=f"upload_yt_btn_{key_prefix}_{task_id}",
+                            use_container_width=True,
+                            icon=":material/upload:",
+                            help="Publish to YouTube via Google OAuth",
+                            disabled=not has_video,
+                        ):
+                            _render_youtube_upload_dialog(task)
+
+                with action_cols[4]:
                     restore_label = tr("Regenerate Task")
                     if st.button(
                         restore_label,
@@ -2442,7 +2584,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                     ):
                         _queue_task_restore(task_id)
 
-                with action_cols[4]:
+                with action_cols[5]:
                     delete_label = tr("Delete Task")
                     delete_help = (
                         f"{delete_label} ({tr('Task Status Processing')})"
@@ -2527,18 +2669,46 @@ def _render_task_video_preview():
     task_dir_path = os.path.dirname(preview_file)
     task_id = os.path.basename(task_dir_path)
     download_name = os.path.basename(preview_file)
-    try:
-        with open(preview_file, "rb") as vf:
-            st.download_button(
-                label=f"⬇️ {tr('Download Video')}",
-                data=vf,
-                file_name=download_name,
-                mime="video/mp4",
-                key=f"download_preview_btn_{task_id}",
+    btn_cols = st.columns([1, 1])
+    with btn_cols[0]:
+        try:
+            with open(preview_file, "rb") as vf:
+                st.download_button(
+                    label=f"⬇️ {tr('Download Video')}",
+                    data=vf,
+                    file_name=download_name,
+                    mime="video/mp4",
+                    key=f"download_preview_btn_{task_id}",
+                    use_container_width=True,
+                )
+        except Exception as exc:
+            logger.warning(f"failed to render preview download button: {exc}")
+
+    with btn_cols[1]:
+        task_meta = tm.get_task(task_id) or {}
+        yt_url = task_meta.get("youtube_url")
+        if yt_url:
+            st.link_button(
+                "🎬 View on YouTube",
+                yt_url,
+                key=f"view_yt_btn_{task_id}",
                 use_container_width=True,
+                icon=":material/smart_display:",
             )
-    except Exception as exc:
-        logger.warning(f"failed to render preview download button: {exc}")
+        else:
+            if st.button(
+                "🚀 Upload to YouTube",
+                key=f"preview_yt_upload_btn_{task_id}",
+                use_container_width=True,
+                icon=":material/upload:",
+                help="Publish this video directly to your connected YouTube channel via Google OAuth",
+            ):
+                _render_youtube_upload_dialog({
+                    "task_id": task_id,
+                    "video_file": preview_file,
+                    "task_path": task_dir_path,
+                    "subject": task_meta.get("subject", task_id),
+                })
 
     combined_path = os.path.join(task_dir_path, "combined-1.mp4")
     audio_path = os.path.join(task_dir_path, "audio.mp3")
@@ -4611,6 +4781,111 @@ def _render_settings_dialog():
         )
 
         with publish_config_panel:
+            st.markdown(f"### 🎬 {tr('BangAI Google OAuth YouTube Publishing')}")
+            st.caption("Official Google YouTube Data API v3 integration with direct Resumable Upload streaming (Zero extra cost).")
+
+            oauth_enabled = config.youtube_oauth.get("enabled", True)
+            col_oe1, col_oe2 = st.columns([1, 1])
+            with col_oe1:
+                enable_yt_oauth = st.checkbox(
+                    "Enable BangAI Google OAuth Publishing",
+                    value=oauth_enabled,
+                    key="settings_youtube_oauth_enabled_checkbox",
+                )
+                if enable_yt_oauth != oauth_enabled:
+                    _set_runtime_config("youtube_oauth", "enabled", enable_yt_oauth)
+
+            if enable_yt_oauth:
+                saved_upload_mode = config.youtube_oauth.get("upload_mode", "manual")
+                mode_options = ["manual", "auto"]
+                mode_labels = {
+                    "manual": "✋ Manual Review Mode (Review in Task Manager first before uploading)",
+                    "auto": "⚡ Automatic Mode (Auto-upload to YouTube immediately when rendering finishes)",
+                }
+                upload_mode = st.radio(
+                    "Publishing Mode",
+                    options=mode_options,
+                    index=mode_options.index(saved_upload_mode) if saved_upload_mode in mode_options else 0,
+                    format_func=mode_labels.get,
+                    key="settings_youtube_oauth_upload_mode_radio",
+                    help="Choose whether videos should upload automatically or wait for manual review in the Task Manager.",
+                )
+                if upload_mode != saved_upload_mode:
+                    _set_runtime_config("youtube_oauth", "upload_mode", upload_mode)
+
+                channels = youtube_oauth.youtube_oauth_service.fetch_connected_channels()
+                if channels:
+                    channel_ids = [c["channelId"] for c in channels]
+                    saved_cid = config.youtube_oauth.get("selected_channel_id", "")
+                    if not saved_cid or saved_cid not in channel_ids:
+                        default_ch = next((c for c in channels if c.get("isDefault")), channels[0])
+                        saved_cid = default_ch["channelId"]
+                        _set_runtime_config("youtube_oauth", "selected_channel_id", saved_cid)
+
+                    def _format_ch(cid):
+                        for c in channels:
+                            if c["channelId"] == cid:
+                                title = c.get("channelTitle", "Channel")
+                                subs = c.get("subscriberCount", "0")
+                                d_tag = " ★ [Default]" if c.get("isDefault") else ""
+                                e_tag = " ⚠️ (Expired)" if c.get("needsReconnect") else " 🟢"
+                                return f"{title} ({subs} subs){d_tag}{e_tag}"
+                        return cid
+
+                    sel_cid = st.selectbox(
+                        "Target YouTube Channel",
+                        options=channel_ids,
+                        index=channel_ids.index(saved_cid) if saved_cid in channel_ids else 0,
+                        format_func=_format_ch,
+                        key="settings_youtube_oauth_channel_selectbox",
+                        help="Select which connected YouTube channel videos will be uploaded to.",
+                    )
+                    if sel_cid != config.youtube_oauth.get("selected_channel_id"):
+                        _set_runtime_config("youtube_oauth", "selected_channel_id", sel_cid)
+
+                    cur_ch = next((c for c in channels if c["channelId"] == sel_cid), None)
+                    if cur_ch:
+                        if cur_ch.get("needsReconnect"):
+                            st.warning(f"⚠️ Channel connection expired: {cur_ch.get('reconnectReason') or 'Please reconnect your channel in BangAI Profile.'}")
+                        else:
+                            st.success(f"Connected: **{cur_ch.get('channelTitle')}** (Subscribers: {cur_ch.get('subscriberCount', '0')})")
+                else:
+                    st.info("ℹ️ No YouTube channels found for your account. Please connect your YouTube channel in your [BangAI Profile](https://bangai.netlify.app/#/profile).")
+
+                if st.button("🔄 Refresh Channels List", key="settings_yt_refresh_channels_btn"):
+                    youtube_oauth.youtube_oauth_service.fetch_connected_channels(force_refresh=True)
+                    st.rerun()
+
+                col_y1, col_y2 = st.columns(2)
+                with col_y1:
+                    yt_priv_options = ["public", "unlisted", "private"]
+                    saved_yt_priv = config.youtube_oauth.get("default_privacy_status", "public")
+                    if saved_yt_priv not in yt_priv_options:
+                        saved_yt_priv = "public"
+                    selected_yt_priv = st.selectbox(
+                        "Default YouTube Privacy Status",
+                        options=yt_priv_options,
+                        index=yt_priv_options.index(saved_yt_priv),
+                        key="settings_youtube_oauth_privacy_selectbox",
+                    )
+                    if selected_yt_priv != saved_yt_priv:
+                        _set_runtime_config("youtube_oauth", "default_privacy_status", selected_yt_priv)
+
+                with col_y2:
+                    saved_mfk = config.youtube_oauth.get("made_for_kids", False)
+                    selected_mfk = st.selectbox(
+                        "YouTube Audience (COPPA)",
+                        options=[False, True],
+                        index=1 if saved_mfk else 0,
+                        format_func=lambda v: "Made for Kids" if v else "Not Made for Kids",
+                        key="settings_youtube_oauth_made_for_kids_selectbox",
+                    )
+                    if selected_mfk != saved_mfk:
+                        _set_runtime_config("youtube_oauth", "made_for_kids", selected_mfk)
+
+            st.divider()
+
+            st.markdown(f"### 🌐 {tr('Third-Party Social Syndication (Upload-Post.com)')}")
             st.write(tr("Automatically publish generated videos to social media using upload-post.com"))
             st.info(
                 tr("Upload-Post Setup Guide").format(
