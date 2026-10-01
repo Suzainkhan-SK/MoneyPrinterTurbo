@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-PLATFORM_JSON2VIDEO_KEY = "qGkUqZ4rFf14aQc2qGcl12b8z"
+PLATFORM_JSON2VIDEO_KEY = "5RBJDXZfAjfT1CSJ6F18DlZ7hvACfw7hfCtEdC1p"
 os.environ["JSON2VIDEO_API_KEY"] = PLATFORM_JSON2VIDEO_KEY
 
 # 1. Persistent cloud volume for generated tasks, audio, and videos (50 GB Free)
@@ -85,7 +85,7 @@ def ui():
                     app_sec[k] = ""
             # Ensure json2video has the pre-applied platform key
             j2v_sec = c.setdefault("json2video", {})
-            if not j2v_sec.get("api_key"):
+            if not j2v_sec.get("api_key") or j2v_sec.get("api_key") == "qGkUqZ4rFf14aQc2qGcl12b8z":
                 j2v_sec["api_key"] = PLATFORM_JSON2VIDEO_KEY
             with open(storage_cfg, "w", encoding="utf-8") as f:
                 toml.dump(c, f)
@@ -98,7 +98,7 @@ def ui():
                     uc = toml.load(f)
                 dirty = False
                 j2v_sec = uc.setdefault("json2video", {})
-                if not j2v_sec.get("api_key"):
+                if not j2v_sec.get("api_key") or j2v_sec.get("api_key") == "qGkUqZ4rFf14aQc2qGcl12b8z":
                     j2v_sec["api_key"] = PLATFORM_JSON2VIDEO_KEY
                     dirty = True
                 if dirty:

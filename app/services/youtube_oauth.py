@@ -220,11 +220,23 @@ class YouTubeOAuthService:
         clean_uid = str(user_id).strip()
         if not clean_uid or clean_uid in ("default_user", "guest"):
             return
+        token_str = str(token).strip() if token else ""
+        email_str = str(email).strip().lower() if email else ""
+
+        # Avoid redundant disk writes on repeated Streamlit reruns
+        if (
+            self._cached_user_id == clean_uid
+            and self._cached_token == token_str
+            and self._cached_email == email_str
+        ):
+            return
+
         self._cached_user_id = clean_uid
-        if token:
-            self._cached_token = str(token).strip()
-        if email:
-            self._cached_email = str(email).strip().lower()
+        if token_str:
+            self._cached_token = token_str
+        if email_str:
+            self._cached_email = email_str
+
         for base_path in ["storage", "/root/storage"]:
             user_dir = os.path.join(base_path, "users", clean_uid)
             try:
@@ -273,7 +285,7 @@ class YouTubeOAuthService:
             params["token"] = token
 
         try:
-            res = requests.get(url, headers=headers, params=params, timeout=12)
+            res = requests.get(url, headers=headers, params=params, timeout=4)
             if res.ok:
                 data = res.json()
                 channels = data.get("channels", [])

@@ -2078,20 +2078,32 @@ def _task_state_filter_key(task):
     return "history"
 
 
-def _scan_history_tasks(limit=30):
-    try:
-        if os.path.exists("/root/storage"):
+_history_task_meta_cache = {}
+_last_volume_reload_ts = 0.0
+
+
+def _maybe_reload_cloud_volume(min_interval=30.0):
+    global _last_volume_reload_ts
+    import time
+    now = time.time()
+    if now - _last_volume_reload_ts < min_interval:
+        return
+    _last_volume_reload_ts = now
+    if os.path.exists("/root/storage"):
+        try:
             import modal
             modal.Volume.from_name("bangai-storage").reload()
-    except Exception as e:
-        logger.debug(f"modal volume reload skipped: {e}")
+        except Exception as e:
+            logger.debug(f"modal volume reload skipped: {e}")
 
+
+def _scan_history_tasks(limit=30):
     tasks_root = utils.task_dir()
     if not os.path.isdir(tasks_root):
         return []
 
-    # 任务管理 fragment 每两秒刷新一次。先只读取低成本的目录元数据并截取最近
-    # 的任务，再解析 script.json 和视频列表，避免历史任务很多时反复扫描全部内容。
+    # 任务管理 fragment 定时刷新。先只读取低成本的目录元数据并截取最近
+    # 的任务，使用缓存避免反复解析已完成任务的 script.json 和视频列表。
     task_entries = []
     try:
         with os.scandir(tasks_root) as entries:
@@ -2109,7 +2121,6 @@ def _scan_history_tasks(limit=30):
                         )
                     )
                 except OSError as e:
-                    # 单个任务目录可能正在被删除，不应因此让整个任务面板失效。
                     logger.debug(f"skip unavailable task directory: {entry.path}, {e}")
     except OSError as e:
         logger.warning(f"failed to scan task directory: {tasks_root}, {e}")
@@ -2118,6 +2129,12 @@ def _scan_history_tasks(limit=30):
     task_entries.sort(key=lambda item: item[0], reverse=True)
     tasks = []
     for mtime, name, task_path in task_entries[:limit]:
+        cache_key = (task_path, mtime)
+        cached_info = _history_task_meta_cache.get(cache_key)
+        if cached_info is not None:
+            tasks.append(cached_info)
+            continue
+
         script_data = _safe_load_task_script(task_path)
         params_data = script_data.get("params", {}) if script_data else {}
         video_file = _find_final_task_video(task_path)
@@ -2135,20 +2152,20 @@ def _scan_history_tasks(limit=30):
             except Exception:
                 pass
 
-        tasks.append(
-            {
-                "task_id": name,
-                "subject": subject,
-                "state": const.TASK_STATE_COMPLETE if video_file else None,
-                "progress": 100 if video_file else 0,
-                "mtime": mtime,
-                "task_path": task_path,
-                "video_file": video_file,
-                "source": "history",
-                "youtube_url": state_data.get("youtube_url", ""),
-                "youtube_channel_title": state_data.get("youtube_channel_title", ""),
-            }
-        )
+        task_item = {
+            "task_id": name,
+            "subject": subject,
+            "state": const.TASK_STATE_COMPLETE if video_file else None,
+            "progress": 100 if video_file else 0,
+            "mtime": mtime,
+            "task_path": task_path,
+            "video_file": video_file,
+            "source": "history",
+            "youtube_url": state_data.get("youtube_url", ""),
+            "youtube_channel_title": state_data.get("youtube_channel_title", ""),
+        }
+        _history_task_meta_cache[cache_key] = task_item
+        tasks.append(task_item)
 
     return tasks
 
@@ -2879,12 +2896,14 @@ def _render_task_video_preview():
                         st.error(f"Re-render failed: {msg}")
 
 
-@st.fragment(run_every="2s")
+@st.fragment(run_every="3s")
 def _render_task_manager_entry():
     # 任务可能由当前页面或其它页面触发生成。入口单独用 fragment 定时刷新，
     # 只更新任务数量和 popover 内容，不打断主页面表单输入。
     task_summaries = _collect_task_summaries()
     processing_task_count = _count_processing_tasks(task_summaries)
+    if processing_task_count > 0:
+        _maybe_reload_cloud_volume(min_interval=15.0)
     with st.container(key="task_manager_entry", width="content"):
         with st.popover(
             _task_manager_label(processing_task_count),

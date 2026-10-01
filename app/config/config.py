@@ -39,19 +39,39 @@ _MISSING = object()
 _DELETE = object()
 _UTF8_BOM = "\ufeff"
 _current_active_user_id = None
+PLATFORM_JSON2VIDEO_API_KEY = "5RBJDXZfAjfT1CSJ6F18DlZ7hvACfw7hfCtEdC1p"
+
+
+_volume_commit_lock = threading.Lock()
+_pending_volume_commit = False
+
+
+def _async_commit_worker():
+    global _pending_volume_commit
+    import time
+    time.sleep(1.0)
+    with _volume_commit_lock:
+        if not _pending_volume_commit:
+            return
+        _pending_volume_commit = False
+    try:
+        if os.path.isdir("/root/storage") or os.environ.get("MODAL_IMAGE_ID") or os.environ.get("MODAL_SERVE"):
+            import modal
+            vol = modal.Volume.from_name("bangai-storage")
+            vol.commit()
+            logger.info("Asynchronously committed persistent storage to Modal volume 'bangai-storage'")
+    except Exception as e:
+        logger.debug(f"modal volume commit note: {e}")
 
 
 def sync_cloud_volume():
-    """Commit persistent storage changes to Modal volume if running in Modal cloud environment."""
+    """Commit persistent storage changes to Modal volume in a non-blocking background thread."""
     if not (os.path.isdir("/root/storage") or os.environ.get("MODAL_IMAGE_ID") or os.environ.get("MODAL_SERVE")):
         return
-    try:
-        import modal
-        vol = modal.Volume.from_name("bangai-storage")
-        vol.commit()
-        logger.info("committed persistent config to Modal volume 'bangai-storage'")
-    except Exception as e:
-        logger.debug(f"modal volume commit note: {e}")
+    global _pending_volume_commit
+    with _volume_commit_lock:
+        _pending_volume_commit = True
+    threading.Thread(target=_async_commit_worker, daemon=True).start()
 
 
 class _SynchronizedConfig(dict):
@@ -522,8 +542,8 @@ def _sanitize_config_dict(cfg: dict) -> dict:
 
     # json2video is the platform-provided ElevenLabs Premium TTS service - guarantee pre-applied key
     j2v = cfg.setdefault("json2video", {})
-    if not j2v.get("api_key"):
-        j2v["api_key"] = os.getenv("JSON2VIDEO_API_KEY", "qGkUqZ4rFf14aQc2qGcl12b8z")
+    if not j2v.get("api_key") or j2v.get("api_key") == "qGkUqZ4rFf14aQc2qGcl12b8z":
+        j2v["api_key"] = os.getenv("JSON2VIDEO_API_KEY", PLATFORM_JSON2VIDEO_API_KEY)
 
     # Strip personal user prompts so new users get clean input boxes
     ui_sec = cfg.setdefault("ui", {})
@@ -627,8 +647,8 @@ def switch_user_config(user_id: str):
             voxcpm.update(new_cfg.get("voxcpm", {}))
             json2video.clear()
             json2video.update(new_cfg.get("json2video", {}))
-            if not json2video.get("api_key"):
-                json2video["api_key"] = os.getenv("JSON2VIDEO_API_KEY", "qGkUqZ4rFf14aQc2qGcl12b8z")
+            if not json2video.get("api_key") or json2video.get("api_key") == "qGkUqZ4rFf14aQc2qGcl12b8z":
+                json2video["api_key"] = os.getenv("JSON2VIDEO_API_KEY", PLATFORM_JSON2VIDEO_API_KEY)
                 _cfg.setdefault("json2video", {})["api_key"] = json2video["api_key"]
             ui.clear()
             ui.update(new_cfg.get("ui", {"hide_log": False}))
@@ -688,7 +708,6 @@ def save_config():
                 if f.read() == serialized_config:
                     _cfg.clear()
                     _cfg.update(config_to_save)
-                    sync_cloud_volume()
                     return
         except (OSError, UnicodeError):
             pass
