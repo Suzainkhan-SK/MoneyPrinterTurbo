@@ -1,0 +1,17 @@
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[logger]
+hideWelcomeMessage = true
+
+[theme]
+primaryColor = "#ff4f00"
+backgroundColor = "#fffefb"
+secondaryBackgroundColor = "#f8f4f0"
+textColor = "#201515"
+font = "sans serif"
+
+

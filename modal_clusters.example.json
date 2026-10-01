@@ -1,0 +1,31 @@
+{
+  "active_primary": "cmpunktg",
+  "clusters": [
+    {
+      "id": "cmpunktg",
+      "name": "Modal Primary Account",
+      "profile": "cmpunktg",
+      "token_id": "ak-YOUR_PRIMARY_TOKEN_ID",
+      "token_secret": "as-YOUR_PRIMARY_TOKEN_SECRET",
+      "ui_url": "https://cmpunktg--bangai-stock-studio-ui.modal.run",
+      "serve_url": "https://cmpunktg--bangai-stock-studio-serve.modal.run",
+      "role": "primary",
+      "priority": 1,
+      "credit_estimate": "$20.00",
+      "enabled": true
+    },
+    {
+      "id": "cmpunktg1",
+      "name": "Modal Backup Account (cmpunktg1)",
+      "profile": "cmpunktg1",
+      "token_id": "ak-YOUR_BACKUP_TOKEN_ID",
+      "token_secret": "as-YOUR_BACKUP_TOKEN_SECRET",
+      "ui_url": "https://cmpunktg1--bangai-stock-studio-ui.modal.run",
+      "serve_url": "https://cmpunktg1--bangai-stock-studio-serve.modal.run",
+      "role": "backup",
+      "priority": 2,
+      "credit_estimate": "$1.00",
+      "enabled": true
+    }
+  ]
+}
