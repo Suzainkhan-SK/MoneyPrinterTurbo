@@ -2515,75 +2515,60 @@ def _render_youtube_upload_dialog(task):
 
 
 def _render_task_table(filtered_tasks, key_prefix):
-    with st.container(key=f"task_table_header_{key_prefix}"):
-        header_cols = st.columns([0.9, 1.3, 2.3, 0.6, 2.9], vertical_alignment="center")
-        header_cols[0].caption(tr("Task Status"))
-        header_cols[1].caption(tr("Task Updated At"))
-        header_cols[2].caption(tr("Task Subject"))
-        header_cols[3].caption(tr("Task Progress"))
-        header_cols[4].caption(tr("Task Actions"))
-
     if not filtered_tasks:
         st.info(tr("No Tasks Match Filter"))
         return
 
-    visible_tasks = filtered_tasks[:12]
-    list_height = min(390, max(96, len(visible_tasks) * 58))
-    with st.container(height=list_height, border=False):
-        for task in visible_tasks:
-            task_id = task["task_id"]
-            has_video = bool(task["video_file"] and os.path.isfile(task["video_file"]))
-            is_processing = _task_state_filter_key(task) == "processing"
-            is_busy = is_processing or tm.is_task_busy(task)
-            has_restore_data = os.path.isfile(
-                os.path.join(task["task_path"], "script.json")
-            )
-            safe_task_key = "".join(ch if ch.isalnum() else "_" for ch in task_id)[:40]
+    visible_tasks = filtered_tasks[:20]
+    for task in visible_tasks:
+        task_id = task["task_id"]
+        has_video = bool(task["video_file"] and os.path.isfile(task["video_file"]))
+        is_processing = _task_state_filter_key(task) == "processing"
+        is_busy = is_processing or tm.is_task_busy(task)
+        has_restore_data = os.path.isfile(
+            os.path.join(task["task_path"], "script.json")
+        )
+        safe_task_key = "".join(ch if ch.isalnum() else "_" for ch in task_id)[:40]
 
-            # 使用 Streamlit 原生 bordered container + columns 保留每行操作。
-            with st.container(
-                key=f"task_row_{key_prefix}_{safe_task_key}", border=True
-            ):
-                row_cols = st.columns(
-                    [0.9, 1.3, 2.3, 0.6, 2.9],
-                    vertical_alignment="center",
-                )
-                row_cols[0].write(_task_state_label(task["state"], has_video))
-                row_cols[1].write(_format_task_time(task["mtime"]))
-                row_cols[2].write(_format_task_subject(task["subject"]))
-                row_cols[3].write(f"{task['progress']}%")
+        with st.container(
+            key=f"task_row_{key_prefix}_{safe_task_key}", border=True
+        ):
+            # Responsive 2-column card layout
+            info_col, action_col = st.columns([3.4, 2.6], vertical_alignment="center")
+            with info_col:
+                state_badge = _task_state_label(task["state"], has_video)
+                time_str = _format_task_time(task["mtime"])
+                subject_str = _format_task_subject(task["subject"], max_length=40)
+                st.markdown(f"**{subject_str}**")
+                meta_parts = [f"`{state_badge}`", f"`{task['progress']}%`", time_str]
+                yt_channel = task.get("youtube_channel_title")
+                if yt_channel:
+                    meta_parts.append(f"📺 {yt_channel}")
+                st.caption(" · ".join(meta_parts))
 
-                action_cols = row_cols[4].columns(
-                    6,
-                    vertical_alignment="center",
-                    gap="small",
-                )
-                with action_cols[0]:
-                    play_label = tr("Play")
-                    if st.button(
-                        play_label,
-                        key=f"play_task_{key_prefix}_{task_id}",
-                        use_container_width=True,
-                        icon=":material/play_arrow:",
-                        help=play_label,
-                        disabled=not has_video,
-                    ):
-                        _open_task_video(task["video_file"])
+            with action_col:
+                if is_processing:
+                    p_cols = st.columns([3, 1], vertical_alignment="center")
+                    with p_cols[0]:
+                        st.progress(max(5, min(100, int(task.get("progress", 0)))))
+                    with p_cols[1]:
+                        if st.button("✕", key=f"cancel_task_{key_prefix}_{task_id}", help=tr("Delete Task"), use_container_width=True):
+                            _delete_task(task_id, task["task_path"], task["state"])
+                            st.rerun()
+                elif has_video:
+                    act_cols = st.columns([1, 1, 1, 0.6], vertical_alignment="center", gap="small")
+                    with act_cols[0]:
+                        play_label = tr("Play")
+                        if st.button(
+                            play_label,
+                            key=f"play_task_{key_prefix}_{task_id}",
+                            use_container_width=True,
+                            icon=":material/play_arrow:",
+                            help=play_label,
+                        ):
+                            _open_task_video(task["video_file"])
 
-                with action_cols[1]:
-                    open_label = tr("Open Task Folder")
-                    if st.button(
-                        open_label,
-                        key=f"open_task_{key_prefix}_{task_id}",
-                        use_container_width=True,
-                        icon=":material/folder_open:",
-                        help=open_label,
-                    ):
-                        _open_task_path(task["task_path"])
-
-                with action_cols[2]:
-                    download_label = tr("Download Video")
-                    if has_video and os.path.isfile(task["video_file"]):
+                    with act_cols[1]:
                         download_name = _build_video_download_name(
                             task.get("subject"),
                             1,
@@ -2592,89 +2577,85 @@ def _render_task_table(filtered_tasks, key_prefix):
                         try:
                             with open(task["video_file"], "rb") as vf:
                                 st.download_button(
-                                    download_label,
+                                    "Save",
                                     data=vf,
                                     file_name=download_name,
                                     mime="video/mp4",
                                     key=f"download_task_{key_prefix}_{task_id}",
                                     use_container_width=True,
                                     icon=":material/download:",
-                                    help=download_label,
+                                    help=tr("Download Video"),
                                 )
                         except Exception:
                             st.button(
-                                download_label,
-                                key=f"download_task_disabled_{key_prefix}_{task_id}",
+                                "Save",
+                                key=f"download_disabled_{key_prefix}_{task_id}",
                                 use_container_width=True,
                                 icon=":material/download:",
-                                help=download_label,
                                 disabled=True,
                             )
-                    else:
-                        st.button(
-                            download_label,
-                            key=f"download_task_disabled_{key_prefix}_{task_id}",
-                            use_container_width=True,
-                            icon=":material/download:",
-                            help=download_label,
-                            disabled=True,
-                        )
 
-                with action_cols[3]:
-                    yt_url = task.get("youtube_url")
-                    if yt_url:
-                        st.link_button(
-                            "Shorts",
-                            yt_url,
-                            key=f"link_yt_{key_prefix}_{task_id}",
-                            use_container_width=True,
-                            icon=":material/smart_display:",
-                            help=f"Published on YouTube: {yt_url}",
-                        )
-                    else:
-                        if st.button(
-                            "Upload",
-                            key=f"upload_yt_btn_{key_prefix}_{task_id}",
-                            use_container_width=True,
-                            icon=":material/upload:",
-                            help="Publish to YouTube via Google OAuth",
-                            disabled=not has_video,
-                        ):
-                            st.session_state["active_yt_task_dialog"] = task
-                            st.rerun(scope="app")
-
-                with action_cols[4]:
-                    restore_label = tr("Regenerate Task")
-                    if st.button(
-                        restore_label,
-                        key=f"restore_task_{key_prefix}_{task_id}",
-                        use_container_width=True,
-                        icon=":material/replay:",
-                        help=restore_label,
-                        disabled=is_processing or not has_restore_data,
-                    ):
-                        _queue_task_restore(task_id)
-
-                with action_cols[5]:
-                    delete_label = tr("Delete Task")
-                    delete_help = (
-                        f"{delete_label} ({tr('Task Status Processing')})"
-                        if is_busy
-                        else delete_label
-                    )
-                    if st.button(
-                        delete_label,
-                        key=f"delete_task_{key_prefix}_{task_id}",
-                        use_container_width=True,
-                        icon=":material/delete:",
-                        help=delete_help,
-                        disabled=is_busy,
-                    ):
-                        if _delete_task(task_id, task["task_path"], task["state"]):
-                            st.toast(tr("Task Deleted"))
-                            st.rerun()
+                    with act_cols[2]:
+                        yt_url = task.get("youtube_url")
+                        if yt_url:
+                            st.link_button(
+                                "Shorts",
+                                yt_url,
+                                key=f"link_yt_{key_prefix}_{task_id}",
+                                use_container_width=True,
+                                icon=":material/smart_display:",
+                                help=f"Published on YouTube: {yt_url}",
+                            )
                         else:
-                            st.error(tr("Task Delete Failed"))
+                            if st.button(
+                                "Upload",
+                                key=f"upload_yt_btn_{key_prefix}_{task_id}",
+                                use_container_width=True,
+                                icon=":material/upload:",
+                                help="Publish to YouTube via Google OAuth",
+                            ):
+                                st.session_state["active_yt_task_dialog"] = task
+                                st.rerun(scope="app")
+
+                    with act_cols[3]:
+                        if st.button(
+                            "🗑️",
+                            key=f"delete_task_{key_prefix}_{task_id}",
+                            use_container_width=True,
+                            help=tr("Delete Task"),
+                            disabled=is_busy,
+                        ):
+                            if _delete_task(task_id, task["task_path"], task["state"]):
+                                st.toast(tr("Task Deleted"))
+                                st.rerun()
+                            else:
+                                st.error(tr("Task Delete Failed"))
+                else:
+                    fail_cols = st.columns([2, 1], vertical_alignment="center", gap="small")
+                    with fail_cols[0]:
+                        restore_label = tr("Regenerate Task")
+                        if st.button(
+                            restore_label,
+                            key=f"restore_task_{key_prefix}_{task_id}",
+                            use_container_width=True,
+                            icon=":material/replay:",
+                            help=restore_label,
+                            disabled=is_processing or not has_restore_data,
+                        ):
+                            _queue_task_restore(task_id)
+                    with fail_cols[1]:
+                        if st.button(
+                            "🗑️",
+                            key=f"delete_task_{key_prefix}_{task_id}",
+                            use_container_width=True,
+                            help=tr("Delete Task"),
+                            disabled=is_busy,
+                        ):
+                            if _delete_task(task_id, task["task_path"], task["state"]):
+                                st.toast(tr("Task Deleted"))
+                                st.rerun()
+                            else:
+                                st.error(tr("Task Delete Failed"))
 
 
 def _render_task_manager_panel(tasks=None):
@@ -2683,8 +2664,6 @@ def _render_task_manager_panel(tasks=None):
         st.info(tr("No Tasks Yet"))
         return
 
-    # Streamlit 1.59 支持有状态 Tabs 的惰性渲染。切换时只重新构建当前列表，
-    # 避免定时 Fragment 每两秒重复创建四套任务行和操作按钮。
     status_tabs = [
         ("all", tr("All Tasks")),
         ("processing", tr("Task Status Processing")),
@@ -2735,6 +2714,7 @@ def _render_task_video_preview():
     )
     if closed:
         st.session_state.pop("task_preview_video_file", None)
+        st.rerun()
         return
     st.video(preview_file)
     task_dir_path = os.path.dirname(preview_file)
@@ -2756,7 +2736,19 @@ def _render_task_video_preview():
             logger.warning(f"failed to render preview download button: {exc}")
 
     with btn_cols[1]:
-        task_meta = tm.get_task(task_id) or {}
+        task_meta = {}
+        try:
+            task_meta = sm.state.get_task(task_id) or {}
+        except Exception:
+            pass
+        if not task_meta:
+            state_file = os.path.join(task_dir_path, "state.json")
+            if os.path.isfile(state_file):
+                try:
+                    with open(state_file, "r", encoding="utf-8") as f:
+                        task_meta = json.load(f)
+                except Exception:
+                    pass
         yt_url = task_meta.get("youtube_url")
         if yt_url:
             st.link_button(

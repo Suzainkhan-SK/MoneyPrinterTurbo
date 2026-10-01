@@ -519,22 +519,39 @@ div[class*="st-key-advanced_settings_"] div[data-testid="stExpanderDetails"] {
 /* 任务管理 popover 需要固定宽度，避免内容从空状态、列表状态切换时
    反复改变宽度造成页面抖动。宽度仍保留视口约束，兼容窄屏。 */
 div[data-testid="stPopoverBody"] {
-    width: min(860px, calc(100vw - 48px)) !important;
-    max-width: min(860px, calc(100vw - 48px)) !important;
+    width: min(880px, calc(100vw - 32px)) !important;
+    max-width: min(880px, calc(100vw - 32px)) !important;
+    max-height: 80vh !important;
+    overflow-y: auto !important;
+    border-radius: 12px !important;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28) !important;
+}
+
+@media (max-width: 768px) {
+    div[data-testid="stPopoverBody"] {
+        width: calc(100vw - 16px) !important;
+        max-width: calc(100vw - 16px) !important;
+        padding: 0.4rem !important;
+    }
 }
 
 div[data-testid="stPopoverBody"] div[data-testid="stVerticalBlock"] {
     width: 100% !important;
 }
 
-/* 任务管理列表保留 Streamlit 原生布局，只做轻量压缩，避免每一行过高。
-   通过 task_row_ key 限定作用范围，避免影响其它配置面板的 container。 */
+/* 任务管理列表卡片式响应布局 */
 div[class*="st-key-task_row_"] {
-    margin-bottom: 0.18rem !important;
+    margin-bottom: 0.35rem !important;
+    border-radius: 8px !important;
+    transition: background 0.15s ease, border-color 0.15s ease !important;
+}
+
+div[class*="st-key-task_row_"]:hover {
+    border-color: rgba(255, 120, 60, 0.45) !important;
 }
 
 div[class*="st-key-task_row_"] div[data-testid="stVerticalBlockBorderWrapper"] {
-    padding: 0.18rem 0.6rem !important;
+    padding: 0.4rem 0.65rem !important;
 }
 
 div[class*="st-key-task_row_"] div[data-testid="stElementContainer"],
@@ -545,49 +562,38 @@ div[class*="st-key-task_row_"] div[data-testid="stMarkdown"] {
 div[class*="st-key-task_row_"] div[data-testid="stMarkdown"] {
     display: flex !important;
     align-items: center !important;
-    min-height: 1.75rem !important;
 }
 
 div[class*="st-key-task_row_"] div[data-testid="stMarkdownContainer"] {
-    display: flex !important;
-    align-items: center !important;
+    display: block !important;
     margin-bottom: 0 !important;
 }
 
 div[class*="st-key-task_row_"] p {
     margin-bottom: 0 !important;
-    line-height: 1.25 !important;
+    line-height: 1.3 !important;
 }
 
-div[class*="st-key-task_row_"] button[kind="secondary"] {
-    position: relative !important;
-    min-height: 1.75rem !important;
-    height: 1.75rem !important;
-    padding: 0.1rem 0.3rem !important;
-}
-
-/* 按钮文字视觉隐藏后，Streamlit 仍会保留图标与文字之间的默认间距，导致
-   单独图标向左偏移。清除该间距并让内容层占满按钮，确保操作图标严格居中。 */
-div[class*="st-key-task_row_"]
-    button[kind="secondary"]
-    span[data-has-shortcut] {
-    width: 100% !important;
-    gap: 0 !important;
+div[class*="st-key-task_row_"] button,
+div[class*="st-key-task_row_"] a[data-testid="stLinkButton"],
+div[class*="st-key-task_row_"] [data-testid="stDownloadButton"] button {
+    min-height: 2.05rem !important;
+    height: 2.05rem !important;
+    padding: 0.15rem 0.5rem !important;
+    font-size: 0.82rem !important;
+    display: inline-flex !important;
+    align-items: center !important;
     justify-content: center !important;
+    border-radius: 6px !important;
+    white-space: nowrap !important;
 }
 
-/* 行内操作保留可访问的按钮名称，但视觉上只显示图标。使用屏幕阅读器可见的
-   隐藏方式，而不是 display:none，确保每个操作仍能被正确朗读。 */
-div[class*="st-key-task_row_"] button[kind="secondary"] p {
-    position: absolute !important;
-    width: 1px !important;
-    height: 1px !important;
-    padding: 0 !important;
-    margin: -1px !important;
-    overflow: hidden !important;
-    clip: rect(0, 0, 0, 0) !important;
-    clip-path: inset(50%) !important;
-    white-space: nowrap !important;
+div[class*="st-key-task_row_"] button p,
+div[class*="st-key-task_row_"] a[data-testid="stLinkButton"] p,
+div[class*="st-key-task_row_"] [data-testid="stDownloadButton"] button p {
+    font-size: 0.82rem !important;
+    margin: 0 !important;
+    line-height: 1 !important;
 }
 
 
