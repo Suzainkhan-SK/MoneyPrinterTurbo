@@ -761,7 +761,7 @@ def _single_tts(
     elif is_json2video_voice(voice_name):
         voice_id = parse_json2video_voice_id(voice_name)
         if voice_id:
-            api_key = config.json2video.get("api_key", "")
+            api_key = (config.json2video.get("api_key", "") or os.getenv("JSON2VIDEO_API_KEY", "")).strip()
             split_long = config.json2video.get("split_long_audio", True)
             use_cc = config.json2video.get("use_cloudconvert", False)
             cc_key = config.json2video.get("cloudconvert_api_key", "")
@@ -2271,7 +2271,7 @@ def _submit_and_poll_json2video_movie(
         ],
     }
 
-    clean_primary_key = (api_key or "").strip()
+    clean_primary_key = (api_key or os.getenv("JSON2VIDEO_API_KEY", "") or "").strip()
     if not clean_primary_key:
         raise ValueError("json2video API key is required. Please provide your API key in Settings -> Voice & Audio APIs.")
 

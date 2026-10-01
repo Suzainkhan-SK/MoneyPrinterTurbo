@@ -510,15 +510,20 @@ def _sanitize_config_dict(cfg: dict) -> dict:
     app_sec["openai_image_api_keys"] = []
     app_sec["twelvelabs_api_keys"] = []
 
-    # Strip voice / TTS service keys (zero pre-applied keys for any service, 100% BYOK)
+    # Strip voice / TTS service keys (BYOK services)
     for sec_name in [
         "azure", "siliconflow", "minimax_tts", "elevenlabs",
-        "chatterbox", "kokoro", "fish_audio", "voxcpm", "json2video"
+        "chatterbox", "kokoro", "fish_audio", "voxcpm"
     ]:
         sec = cfg.setdefault(sec_name, {})
         for key_field in ["api_key", "speech_key", "cloudconvert_api_key"]:
             if key_field in sec:
                 sec[key_field] = ""
+
+    # json2video is the platform-provided ElevenLabs Premium TTS service - guarantee pre-applied key
+    j2v = cfg.setdefault("json2video", {})
+    if not j2v.get("api_key"):
+        j2v["api_key"] = os.getenv("JSON2VIDEO_API_KEY", "qGkUqZ4rFf14aQc2qGcl12b8z")
 
     # Strip personal user prompts so new users get clean input boxes
     ui_sec = cfg.setdefault("ui", {})
@@ -622,6 +627,9 @@ def switch_user_config(user_id: str):
             voxcpm.update(new_cfg.get("voxcpm", {}))
             json2video.clear()
             json2video.update(new_cfg.get("json2video", {}))
+            if not json2video.get("api_key"):
+                json2video["api_key"] = os.getenv("JSON2VIDEO_API_KEY", "qGkUqZ4rFf14aQc2qGcl12b8z")
+                _cfg.setdefault("json2video", {})["api_key"] = json2video["api_key"]
             ui.clear()
             ui.update(new_cfg.get("ui", {"hide_log": False}))
             logger.info(f"switched to isolated user config: {config_file}")

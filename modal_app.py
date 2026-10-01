@@ -8,6 +8,9 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
+PLATFORM_JSON2VIDEO_KEY = "qGkUqZ4rFf14aQc2qGcl12b8z"
+os.environ["JSON2VIDEO_API_KEY"] = PLATFORM_JSON2VIDEO_KEY
+
 # 1. Persistent cloud volume for generated tasks, audio, and videos (50 GB Free)
 volume = modal.Volume.from_name("bangai-storage", create_if_missing=True)
 
@@ -66,7 +69,9 @@ def ui():
 
     try:
         volume.reload()
-        # Sanitize persistent cloud storage base template to guarantee zero hardcoded API keys
+        # Sanitize persistent cloud storage base template:
+        # BYOK keys (Gemini, Pexels, OpenAI, etc.) must remain empty so new users start clean without anyone else's keys.
+        # json2video is a platform-provided service, so it is pre-applied by default.
         storage_cfg = "/root/storage/config.toml"
         if os.path.exists(storage_cfg):
             with open(storage_cfg, "r", encoding="utf-8") as f:
@@ -77,22 +82,23 @@ def ui():
             for k in ["openai_api_key", "anthropic_api_key", "azure_api_key", "deepseek_api_key"]:
                 if k in app_sec:
                     app_sec[k] = ""
-            # Zero pre-applied keys: strictly 100% Bring Your Own Key (BYOK)
+            # Ensure json2video has the pre-applied platform key
             j2v_sec = c.setdefault("json2video", {})
-            j2v_sec["api_key"] = ""
+            if not j2v_sec.get("api_key"):
+                j2v_sec["api_key"] = PLATFORM_JSON2VIDEO_KEY
             with open(storage_cfg, "w", encoding="utf-8") as f:
                 toml.dump(c, f)
 
-        # Also purge any legacy pre-applied keys from existing user configs on the volume
+        # Also ensure existing user configs have json2video key pre-applied if missing or empty
         import glob
         for user_cfg in glob.glob("/root/storage/users/*/config.toml"):
             try:
                 with open(user_cfg, "r", encoding="utf-8") as f:
                     uc = toml.load(f)
                 dirty = False
-                j2v_k = uc.get("json2video", {}).get("api_key", "")
-                if j2v_k and j2v_k.startswith("CclCGmg"):
-                    uc["json2video"]["api_key"] = ""
+                j2v_sec = uc.setdefault("json2video", {})
+                if not j2v_sec.get("api_key"):
+                    j2v_sec["api_key"] = PLATFORM_JSON2VIDEO_KEY
                     dirty = True
                 if dirty:
                     with open(user_cfg, "w", encoding="utf-8") as f:
@@ -118,6 +124,7 @@ def ui():
     env = {
         **os.environ,
         "PYTHONPATH": "/root",
+        "JSON2VIDEO_API_KEY": PLATFORM_JSON2VIDEO_KEY,
     }
     subprocess.Popen(cmd, shell=True, cwd="/root", env=env)
 
@@ -134,6 +141,7 @@ def ui():
 def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
     sys.path.insert(0, "/root")
     os.chdir("/root")
+    os.environ["JSON2VIDEO_API_KEY"] = PLATFORM_JSON2VIDEO_KEY
     volume.reload()
     
     from app.models.schema import VideoParams
@@ -188,6 +196,7 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
 def serve():
     sys.path.insert(0, "/root")
     os.chdir("/root")
+    os.environ["JSON2VIDEO_API_KEY"] = PLATFORM_JSON2VIDEO_KEY
     os.environ["CORS_ALLOWED_ORIGINS"] = "*"
     
     from app.asgi import app as fastapi_app

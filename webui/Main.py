@@ -217,6 +217,15 @@ current_uid = str(auth_user.get("userId") or auth_user.get("id") or "guest").str
 utils.set_current_user_id(current_uid)
 config.switch_user_config(current_uid)
 
+# 2.1 Apply any pending widget session_state updates scheduled by other panels before widgets render
+if "_pending_widget_sync" in st.session_state:
+    pending = st.session_state.pop("_pending_widget_sync", {})
+    for alias, val in pending.items():
+        try:
+            st.session_state[alias] = val
+        except Exception:
+            pass
+
 # 3. Dynamic theme synchronization (Light / Dark) - Zapier Design System
 if query_theme == "light":
     st.markdown(
@@ -1409,15 +1418,22 @@ def _set_runtime_config(section_name, key, value):
     aliases = CREDENTIAL_WIDGET_STATE_ALIASES.get((section_name, key), ())
     for alias in aliases:
         if isinstance(value, str):
+            st.session_state[f"_synced_{alias}"] = None
             try:
                 if st.session_state.get(alias) != value:
                     st.session_state[alias] = value
             except Exception:
-                # Streamlit 不允许在已实例化的 widget 上修改 session_state，静默忽略
-                pass
+                # Streamlit 不允许在已实例化的 widget 上修改 session_state，加入待同步队列在下次 rerun 渲染前生效
+                pending = st.session_state.setdefault("_pending_widget_sync", {})
+                pending[alias] = value
 
     if not updated:
         logger.debug(f"deferred WebUI config update: section={section_name}, key={key}")
+    else:
+        try:
+            _save_runtime_config()
+        except Exception:
+            pass
     return updated
 
 
@@ -2932,6 +2948,8 @@ def _dismiss_settings_dialog():
         config.save_config()
     except Exception:
         pass
+    st.session_state["_synced_json2video_api_key_input"] = None
+    st.session_state["_synced_settings_json2video_api_key_input"] = None
 
 
 def _open_settings_dialog(target_tab=None):
@@ -4407,6 +4425,36 @@ def _render_key_backup_settings(panel):
 # -----------------------------------------------------------------------------
 
 
+def _sync_json2video_api_key_input(widget_key="json2video_api_key_input"):
+    """
+    同步 json2video 密钥在主页面和设置弹窗控件中的状态。
+    确保无论用户在设置弹窗中输入保存，还是在主页面输入保存，两处输入框与底层配置均能即时双向同步，
+    并且防止 Streamlit 在标签重连或 rerun 时因旧的空控件状态误清空用户已保存的密钥。
+    """
+    configured_key = str(config.json2video.get("api_key", "") or "").strip()
+    env_key = os.getenv("JSON2VIDEO_API_KEY", "").strip()
+    effective_key = configured_key or env_key
+    had_widget_state = widget_key in st.session_state
+    current_val = str(st.session_state.get(widget_key, "") or "").strip()
+    last_synced = st.session_state.get(f"_synced_{widget_key}")
+
+    # 1. 如果有效配置发生了变化（例如在设置面板中更新，或从文件加载）：
+    if effective_key != last_synced:
+        st.session_state[widget_key] = effective_key
+        st.session_state[f"_synced_{widget_key}"] = effective_key
+        current_val = effective_key
+    # 2. 如果控件会话为空，但底层配置有有效密钥（防止重连空状态清空配置）：
+    elif not current_val and effective_key:
+        st.session_state[widget_key] = effective_key
+        st.session_state[f"_synced_{widget_key}"] = effective_key
+        current_val = effective_key
+    elif not had_widget_state:
+        st.session_state[widget_key] = current_val
+        st.session_state[f"_synced_{widget_key}"] = current_val
+
+    return current_val
+
+
 def _render_voice_api_settings(panel):
     """渲染语音与音频 API 密钥设置（json2video ElevenLabs Premium、ElevenLabs 原生、Azure 语音等）。"""
     with panel:
@@ -4416,21 +4464,25 @@ def _render_voice_api_settings(panel):
                 "Configure your json2video API Key here to use 9,650+ ElevenLabs Premium voices across 31 languages. "
                 "Get your key from [json2video.com](https://json2video.com). Once saved, it will be automatically reused."
             )
-            saved_j2v_key = str(config.json2video.get("api_key", "") or "").strip()
-            if "settings_json2video_api_key_input" not in st.session_state or not st.session_state["settings_json2video_api_key_input"]:
-                st.session_state["settings_json2video_api_key_input"] = saved_j2v_key
+            saved_j2v_key = _sync_json2video_api_key_input("settings_json2video_api_key_input")
             j2v_api_key = st.text_input(
                 tr("json2video API Key"),
-                value=saved_j2v_key,
                 type="password",
                 help="Your json2video API Key (from json2video.com dashboard). Stored permanently so you don't need to re-enter it.",
                 key="settings_json2video_api_key_input",
             )
-            if j2v_api_key.strip() != str(config.json2video.get("api_key", "") or "").strip():
-                _set_runtime_config("json2video", "api_key", j2v_api_key.strip())
+            if j2v_api_key.strip() != saved_j2v_key:
+                new_key = j2v_api_key.strip()
+                _set_runtime_config("json2video", "api_key", new_key)
                 _save_runtime_config()
+                st.session_state["_synced_settings_json2video_api_key_input"] = new_key
+                st.session_state["_synced_json2video_api_key_input"] = None
+                pending = st.session_state.setdefault("_pending_widget_sync", {})
+                pending["json2video_api_key_input"] = new_key
+                saved_j2v_key = new_key
+
             if saved_j2v_key:
-                st.caption(":green[API Key loaded from persistent Settings]")
+                st.caption(":green[✓ API Key saved & active]")
             else:
                 st.caption("Tip: Enter your key above, or save it permanently in **Settings -> Voice & Audio APIs** so you never have to re-enter it.")
 
@@ -5424,8 +5476,11 @@ def _render_settings_dialog():
                 _save_runtime_config()
                 try:
                     config.save_config()
+                    st.session_state["_synced_json2video_api_key_input"] = None
+                    st.session_state["_synced_settings_json2video_api_key_input"] = None
                     st.toast(tr("Settings saved successfully!"), icon="✅")
                     st.success(tr("Settings saved successfully!"))
+                    st.rerun(scope="app")
                 except Exception as e:
                     st.error(f"Error saving settings: {e}")
 
@@ -8905,19 +8960,24 @@ def _render_audio_settings(panel, params):
                 selected_tts_server == "json2video"
                 or (voice_name and voice.is_json2video_voice(voice_name))
             ):
-                saved_json2video_api_key = str(config.json2video.get("api_key", "") or "").strip()
+                saved_json2video_api_key = _sync_json2video_api_key_input("json2video_api_key_input")
                 key_col1, key_col2 = st.columns([0.84, 0.16], gap="small", vertical_alignment="bottom")
                 with key_col1:
                     json2video_api_key = st.text_input(
                         tr("json2video API Key"),
-                        value=saved_json2video_api_key,
                         type="password",
                         key="json2video_api_key_input",
                         help="Your json2video API Key (from json2video.com dashboard). Stored permanently in Settings.",
                     )
-                    if json2video_api_key.strip() != str(config.json2video.get("api_key", "") or "").strip():
-                        _set_runtime_config("json2video", "api_key", json2video_api_key.strip())
+                    if json2video_api_key.strip() != saved_json2video_api_key:
+                        new_key = json2video_api_key.strip()
+                        _set_runtime_config("json2video", "api_key", new_key)
                         _save_runtime_config()
+                        st.session_state["_synced_json2video_api_key_input"] = new_key
+                        st.session_state["_synced_settings_json2video_api_key_input"] = None
+                        pending = st.session_state.setdefault("_pending_widget_sync", {})
+                        pending["settings_json2video_api_key_input"] = new_key
+                        saved_json2video_api_key = new_key
                 with key_col2:
                     st.button(
                         "⚙️",
@@ -8927,7 +8987,7 @@ def _render_audio_settings(panel, params):
                     )
 
                 if saved_json2video_api_key:
-                    st.caption(":green[API Key loaded from persistent Settings]")
+                    st.caption(":green[✓ API Key saved & active]")
                 else:
                     st.caption("Tip: Enter your key above, or save it permanently in **Settings -> Voice & Audio APIs** so you never have to re-enter it.")
 
