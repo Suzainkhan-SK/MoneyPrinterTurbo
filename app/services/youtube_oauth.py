@@ -29,6 +29,9 @@ class YouTubeOAuthService:
 
     def __init__(self):
         self._channels_cache = {}
+        self._cached_user_id = ""
+        self._cached_token = ""
+        self._cached_email = ""
 
     @staticmethod
     def decode_jwt_unverified(token_str: str) -> Dict[str, Any]:
@@ -110,52 +113,30 @@ class YouTubeOAuthService:
     def get_user_credentials(
         self, user_id: Optional[str] = None, task_id: Optional[str] = None
     ) -> Dict[str, str]:
-        """Resolve active user ID, email, and JWT token from session, task, disk or environment."""
+        """Resolve active user ID, email, and JWT token from memory, session, task, disk or environment."""
         token = ""
         resolved_uid = str(user_id or "").strip()
         email = ""
 
-        # 1. If task_id provided, deduce user ID from task storage directory
-        if not resolved_uid and task_id:
-            matches = glob.glob(f"storage/users/*/tasks/{task_id}") + glob.glob(
-                f"/root/storage/users/*/tasks/{task_id}"
-            )
-            if matches:
-                norm = matches[0].replace("\\", "/")
-                parts = norm.split("/")
-                if "users" in parts:
-                    idx = parts.index("users")
-                    if idx + 1 < len(parts):
-                        candidate = parts[idx + 1].strip()
-                        if candidate and candidate not in ("guest", "default_user"):
-                            resolved_uid = candidate
+        # 0. Check in-memory cache if not supplied
+        if not resolved_uid or resolved_uid in ("guest", "default_user"):
+            if self._cached_user_id and self._cached_user_id not in ("guest", "default_user"):
+                resolved_uid = self._cached_user_id
+        if self._cached_token and not token:
+            token = self._cached_token
+        if self._cached_email and not email:
+            email = self._cached_email
 
-        # 2. Check Streamlit context safely if available
-        try:
-            import streamlit as st
-            params = st.query_params
-            token = params.get("token", "") or token
-            if not resolved_uid or resolved_uid in ("guest", "default_user"):
-                resolved_uid = params.get("user_id", "") or params.get("uid", "") or ""
-            email = params.get("email", "") or email
+        # 1. Check utils.get_current_user_id()
+        if not resolved_uid or resolved_uid in ("guest", "default_user"):
+            try:
+                u_uid = utils.get_current_user_id()
+                if u_uid and u_uid not in ("guest", "default_user"):
+                    resolved_uid = u_uid
+            except Exception:
+                pass
 
-            # Check session state
-            token = token or st.session_state.get("bangai_token", "") or ""
-            if not resolved_uid or resolved_uid in ("guest", "default_user"):
-                resolved_uid = st.session_state.get("bangai_user_id", "") or ""
-            email = email or st.session_state.get("bangai_email", "") or ""
-        except Exception:
-            pass
-
-        # 3. If token present, decode unverified JWT payload to extract userId and email
-        if token:
-            jwt_data = self.decode_jwt_unverified(token)
-            if not resolved_uid or resolved_uid in ("guest", "default_user"):
-                resolved_uid = jwt_data.get("userId") or resolved_uid
-            if not email:
-                email = jwt_data.get("email") or email
-
-        # 4. Fallback to active config user ID
+        # 2. Check config active user ID
         if not resolved_uid or resolved_uid in ("guest", "default_user"):
             try:
                 from app.config.config import get_active_user_id
@@ -165,7 +146,48 @@ class YouTubeOAuthService:
             except Exception:
                 pass
 
-        # 5. Check persisted user auth file on disk if user_id known
+        # 3. Check Streamlit context safely if available
+        try:
+            import streamlit as st
+            # Session state first (most reliable during active user session)
+            token = token or st.session_state.get("bangai_token", "") or ""
+            if not resolved_uid or resolved_uid in ("guest", "default_user"):
+                resolved_uid = st.session_state.get("bangai_user_id", "") or ""
+            email = email or st.session_state.get("bangai_email", "") or ""
+
+            # Then query params
+            params = st.query_params
+            token = token or params.get("token", "") or ""
+            if not resolved_uid or resolved_uid in ("guest", "default_user"):
+                resolved_uid = params.get("user_id", "") or params.get("uid", "") or ""
+            email = email or params.get("email", "") or ""
+        except Exception:
+            pass
+
+        # 4. If task_id provided, deduce user ID from task storage directory
+        if (not resolved_uid or resolved_uid in ("guest", "default_user")) and task_id:
+            try:
+                task_dir = utils.task_dir()
+                norm = os.path.normpath(task_dir).replace("\\", "/")
+                parts = norm.split("/")
+                if "users" in parts:
+                    idx = parts.index("users")
+                    if idx + 1 < len(parts):
+                        candidate = parts[idx + 1].strip()
+                        if candidate and candidate not in ("guest", "default_user"):
+                            resolved_uid = candidate
+            except Exception:
+                pass
+
+        # 5. If token present, decode unverified JWT payload to extract userId and email
+        if token:
+            jwt_data = self.decode_jwt_unverified(token)
+            if not resolved_uid or resolved_uid in ("guest", "default_user"):
+                resolved_uid = jwt_data.get("userId") or resolved_uid
+            if not email:
+                email = jwt_data.get("email") or email
+
+        # 6. Check persisted user auth file on disk if user_id known
         if resolved_uid and resolved_uid not in ("guest", "default_user"):
             for base_dir in ["storage", "/root/storage"]:
                 auth_file = os.path.join(base_dir, "users", resolved_uid, "auth.json")
@@ -179,6 +201,14 @@ class YouTubeOAuthService:
                     except Exception:
                         pass
 
+        # Cache valid findings
+        if resolved_uid and resolved_uid not in ("guest", "default_user"):
+            self._cached_user_id = resolved_uid
+        if token:
+            self._cached_token = token
+        if email:
+            self._cached_email = email
+
         return {
             "token": str(token).strip(),
             "user_id": str(resolved_uid).strip(),
@@ -186,19 +216,28 @@ class YouTubeOAuthService:
         }
 
     def save_user_credentials(self, user_id: str, token: str = "", email: str = ""):
-        """Persist user auth to disk so background render tasks can access it without Streamlit context."""
+        """Persist user auth to memory and disk so background render tasks can access it without Streamlit context."""
         clean_uid = str(user_id).strip()
         if not clean_uid or clean_uid in ("default_user", "guest"):
             return
+        self._cached_user_id = clean_uid
+        if token:
+            self._cached_token = str(token).strip()
+        if email:
+            self._cached_email = str(email).strip().lower()
         for base_path in ["storage", "/root/storage"]:
             user_dir = os.path.join(base_path, "users", clean_uid)
-            if os.path.isdir(user_dir):
+            try:
+                os.makedirs(user_dir, exist_ok=True)
                 auth_file = os.path.join(user_dir, "auth.json")
-                try:
-                    with open(auth_file, "w", encoding="utf-8") as f:
-                        json.dump({"token": token, "email": email, "userId": clean_uid}, f, indent=2)
-                except Exception as ex:
-                    logger.debug(f"[YouTube OAuth] Could not save {auth_file}: {ex}")
+                with open(auth_file, "w", encoding="utf-8") as f:
+                    json.dump(
+                        {"token": self._cached_token, "email": self._cached_email, "userId": clean_uid},
+                        f,
+                        indent=2,
+                    )
+            except Exception as ex:
+                logger.debug(f"[YouTube OAuth] Could not save {user_dir}/auth.json: {ex}")
 
     def fetch_connected_channels(
         self, force_refresh: bool = False, user_id: Optional[str] = None
@@ -481,7 +520,7 @@ class YouTubeOAuthService:
 
             youtube_url = f"https://youtube.com/shorts/{video_id}"
             logger.success(
-                f"[YouTube OAuth] 🎉 Video successfully published to YouTube! URL: {youtube_url}"
+                f"[YouTube OAuth] [SUCCESS] Video successfully published to YouTube! URL: {youtube_url}"
             )
 
             # 4. Save to task state if task_id provided

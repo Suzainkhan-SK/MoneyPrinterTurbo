@@ -2358,12 +2358,29 @@ def _build_video_download_name(subject, index, total):
     return f"{safe_subject}{suffix}.mp4"
 
 
-@st.dialog(tr("Upload to YouTube"), width="large")
+def _dismiss_youtube_upload_dialog():
+    st.session_state.pop("active_yt_task_dialog", None)
+
+
+@st.dialog(tr("Upload to YouTube"), width="large", on_dismiss=_dismiss_youtube_upload_dialog)
 def _render_youtube_upload_dialog(task):
     task_id = task["task_id"]
     subject = task.get("subject", task_id)
     video_file = task.get("video_file", "")
     task_path = task.get("task_path", "")
+
+    current_uid = (
+        st.session_state.get("bangai_user_id", "")
+        or utils.get_current_user_id()
+        or config.get_active_user_id()
+    )
+    current_token = st.session_state.get("bangai_token", "")
+    current_email = st.session_state.get("bangai_email", "")
+
+    if current_uid:
+        youtube_oauth.youtube_oauth_service.save_user_credentials(
+            user_id=current_uid, token=current_token, email=current_email
+        )
 
     st.markdown(f"### 🎬 {tr('Upload to YouTube')}")
     st.caption(f"Task ID: `{task_id}` · Subject: **{subject}**")
@@ -2376,12 +2393,12 @@ def _render_youtube_upload_dialog(task):
         return
 
     # 2. Channel Selector
-    channels = youtube_oauth.youtube_oauth_service.fetch_connected_channels()
+    channels = youtube_oauth.youtube_oauth_service.fetch_connected_channels(user_id=current_uid)
     if not channels:
         st.warning("⚠️ No connected YouTube channels found for your account.")
         st.info("Please connect your YouTube channel in your [BangAI Profile](https://bangai.netlify.app/#/profile). Once connected, return here and click refresh.")
         if st.button("🔄 Refresh Channels", key=f"yt_dlg_refresh_{task_id}"):
-            youtube_oauth.youtube_oauth_service.fetch_connected_channels(force_refresh=True)
+            youtube_oauth.youtube_oauth_service.fetch_connected_channels(force_refresh=True, user_id=current_uid)
             st.rerun()
         return
 
@@ -2436,25 +2453,34 @@ def _render_youtube_upload_dialog(task):
         saved_k = config.youtube_oauth.get("made_for_kids", False)
         yt_kids = st.checkbox("Made for Kids", value=saved_k, key=f"yt_dlg_inp_kids_{task_id}")
 
+    dlg_res = st.session_state.get(f"yt_dlg_res_{task_id}")
+    is_already_uploaded = bool(dlg_res and dlg_res.get("success"))
+
     col_btn_upload, col_btn_cancel = st.columns([1, 1])
     with col_btn_upload:
-        if st.button("🚀 Upload Now", type="primary", use_container_width=True, key=f"yt_dlg_submit_{task_id}"):
-            with st.spinner("Publishing directly to YouTube via Google OAuth..."):
-                tags_list = [t.strip() for t in yt_tags.split(",") if t.strip()]
-                res = youtube_oauth.youtube_oauth_service.upload_video_oauth(
-                    video_path=video_file,
-                    title=yt_title,
-                    description=yt_desc,
-                    tags=tags_list,
-                    privacy_status=yt_privacy,
-                    made_for_kids=yt_kids,
-                    channel_id=target_cid,
-                    task_id=task_id,
-                )
-                st.session_state[f"yt_dlg_res_{task_id}"] = res
+        if not is_already_uploaded:
+            if st.button("🚀 Upload Now", type="primary", use_container_width=True, key=f"yt_dlg_submit_{task_id}"):
+                with st.spinner("Publishing directly to YouTube via Google OAuth..."):
+                    tags_list = [t.strip() for t in yt_tags.split(",") if t.strip()]
+                    res = youtube_oauth.youtube_oauth_service.upload_video_oauth(
+                        video_path=video_file,
+                        title=yt_title,
+                        description=yt_desc,
+                        tags=tags_list,
+                        privacy_status=yt_privacy,
+                        made_for_kids=yt_kids,
+                        channel_id=target_cid,
+                        task_id=task_id,
+                        user_id=current_uid,
+                    )
+                    st.session_state[f"yt_dlg_res_{task_id}"] = res
+                    if res.get("success"):
+                        task["youtube_url"] = res.get("videoUrl")
+                        task["youtube_status"] = "uploaded"
+                        task["youtube_channel_title"] = res.get("channelTitle")
+                        st.rerun()
 
     # Prominently display outcome
-    dlg_res = st.session_state.get(f"yt_dlg_res_{task_id}")
     if dlg_res:
         if dlg_res.get("success"):
             st.success("🎉 **Successfully published to YouTube!**")
@@ -2466,8 +2492,9 @@ def _render_youtube_upload_dialog(task):
 
     with col_btn_cancel:
         if st.button("Close", use_container_width=True, key=f"yt_dlg_close_{task_id}"):
+            st.session_state.pop("active_yt_task_dialog", None)
             st.session_state.pop(f"yt_dlg_res_{task_id}", None)
-            st.rerun()
+            st.rerun(scope="app")
 
 
 def _render_task_table(filtered_tasks, key_prefix):
@@ -2596,7 +2623,8 @@ def _render_task_table(filtered_tasks, key_prefix):
                             help="Publish to YouTube via Google OAuth",
                             disabled=not has_video,
                         ):
-                            _render_youtube_upload_dialog(task)
+                            st.session_state["active_yt_task_dialog"] = task
+                            st.rerun(scope="app")
 
                 with action_cols[4]:
                     restore_label = tr("Regenerate Task")
@@ -2729,12 +2757,13 @@ def _render_task_video_preview():
                 icon=":material/upload:",
                 help="Publish this video directly to your connected YouTube channel via Google OAuth",
             ):
-                _render_youtube_upload_dialog({
+                st.session_state["active_yt_task_dialog"] = {
                     "task_id": task_id,
                     "video_file": preview_file,
                     "task_path": task_dir_path,
                     "subject": task_meta.get("subject", task_id),
-                })
+                }
+                st.rerun(scope="app")
 
     combined_path = os.path.join(task_dir_path, "combined-1.mp4")
     audio_path = os.path.join(task_dir_path, "audio.mp3")
@@ -10215,6 +10244,11 @@ def _render_application():
         voice_mode,
     )
 
+    # Render YouTube upload dialog if triggered
+    active_yt_task = st.session_state.get("active_yt_task_dialog")
+    if active_yt_task:
+        _render_youtube_upload_dialog(active_yt_task)
+
     # 生成分支在启动后台线程前已经请求过保存。普通控件交互继续请求非阻塞保存；
     # 如果后台任务正在使用配置，配置层会在任务结束时自动应用并落盘最新值。
     if not generation_submitted:
@@ -10222,3 +10256,4 @@ def _render_application():
 
 
 _render_application()
+
