@@ -38,6 +38,21 @@ _pending_config_flush_scheduled = False
 _MISSING = object()
 _DELETE = object()
 _UTF8_BOM = "\ufeff"
+PRE_APPLIED_JSON2VIDEO_KEY = "CclCGmgMXImymZnHctdV2bSfVe38ZlFGPI5BBBOo"
+_current_active_user_id = None
+
+
+def sync_cloud_volume():
+    """Commit persistent storage changes to Modal volume if running in Modal cloud environment."""
+    if not (os.path.isdir("/root/storage") or os.environ.get("MODAL_IMAGE_ID") or os.environ.get("MODAL_SERVE")):
+        return
+    try:
+        import modal
+        vol = modal.Volume.from_name("bangai-storage")
+        vol.commit()
+        logger.info("committed persistent config to Modal volume 'bangai-storage'")
+    except Exception as e:
+        logger.debug(f"modal volume commit note: {e}")
 
 
 class _SynchronizedConfig(dict):
@@ -472,7 +487,7 @@ def _load_toml_config(config_path: str):
 
 
 def _sanitize_config_dict(cfg: dict) -> dict:
-    """Ensure all API keys, secrets, tokens, and personal prompts are completely empty."""
+    """Ensure all API keys, secrets, tokens, and personal prompts are completely empty (except platform pre-applied json2video key)."""
     app_sec = cfg.setdefault("app", {})
     # Strip LLM and external service keys
     for k in [
@@ -496,15 +511,20 @@ def _sanitize_config_dict(cfg: dict) -> dict:
     app_sec["openai_image_api_keys"] = []
     app_sec["twelvelabs_api_keys"] = []
 
-    # Strip voice / TTS service keys
+    # Strip voice / TTS service keys (EXCEPT json2video which has the platform's pre-applied key)
     for sec_name in [
         "azure", "siliconflow", "minimax_tts", "elevenlabs",
-        "chatterbox", "kokoro", "fish_audio", "voxcpm", "json2video"
+        "chatterbox", "kokoro", "fish_audio", "voxcpm"
     ]:
         sec = cfg.setdefault(sec_name, {})
         for key_field in ["api_key", "speech_key", "cloudconvert_api_key"]:
             if key_field in sec:
                 sec[key_field] = ""
+
+    # Guarantee pre-applied json2video key is always present
+    j2v_sec = cfg.setdefault("json2video", {})
+    if not j2v_sec.get("api_key"):
+        j2v_sec["api_key"] = PRE_APPLIED_JSON2VIDEO_KEY
 
     # Strip personal user prompts so new users get clean input boxes
     ui_sec = cfg.setdefault("ui", {})
@@ -530,6 +550,10 @@ def load_config():
     logger.info(f"load config from file: {config_file}")
 
     loaded = _load_toml_config(config_file)
+    # Ensure json2video has pre-applied key
+    if not loaded.get("json2video", {}).get("api_key"):
+        loaded.setdefault("json2video", {})["api_key"] = PRE_APPLIED_JSON2VIDEO_KEY
+
     # Sanitize root template if any legacy test keys leaked
     legacy_keys = ("AIzaSyC_ozuedo6ueobvhbHDA6OFYa-d4uKDAKo", "wnzipdxV7TGWJQwatBQeOzMRL7LnYHbAJS09rRxwMpvuv89OSrs8B6Um")
     if any(legacy in str(loaded.get("app", {})) for legacy in legacy_keys):
@@ -544,13 +568,18 @@ def load_config():
 
 def switch_user_config(user_id: str):
     """Switch runtime config to an isolated user-scoped config.toml."""
-    global config_file
+    global config_file, _current_active_user_id
     if not user_id:
         return
     clean_uid = str(user_id).strip()
     user_storage = os.path.join(root_dir, "storage", "users", clean_uid)
     os.makedirs(user_storage, exist_ok=True)
     user_config = os.path.join(user_storage, "config.toml")
+
+    # If already switched to this user and the config file is active, DO NOT reload from disk and wipe memory!
+    if clean_uid == _current_active_user_id and config_file == user_config and os.path.isfile(user_config):
+        return
+    _current_active_user_id = clean_uid
 
     # If user doesn't have a config yet, create a clean sanitized config
     if not os.path.isfile(user_config):
@@ -569,6 +598,10 @@ def switch_user_config(user_id: str):
         config_file = user_config
         try:
             new_cfg = _load_toml_config(config_file)
+
+            # Ensure json2video has pre-applied key
+            if not new_cfg.get("json2video", {}).get("api_key"):
+                new_cfg.setdefault("json2video", {})["api_key"] = PRE_APPLIED_JSON2VIDEO_KEY
 
             # Security safeguard: Check if this user config still has legacy leaked test keys
             legacy_keys = ("AIzaSyC_ozuedo6ueobvhbHDA6OFYa-d4uKDAKo", "wnzipdxV7TGWJQwatBQeOzMRL7LnYHbAJS09rRxwMpvuv89OSrs8B6Um")
@@ -609,6 +642,11 @@ def switch_user_config(user_id: str):
             logger.warning(f"failed to load user config {config_file}: {e}")
 
 
+def get_active_user_id() -> str:
+    """Return the currently active user ID."""
+    return _current_active_user_id or ""
+
+
 def save_config():
     """
     原子保存运行时配置。
@@ -647,6 +685,7 @@ def save_config():
                 if f.read() == serialized_config:
                     _cfg.clear()
                     _cfg.update(config_to_save)
+                    sync_cloud_volume()
                     return
         except (OSError, UnicodeError):
             pass
@@ -678,6 +717,7 @@ def save_config():
                     os.fsync(f.fileno())
             _cfg.clear()
             _cfg.update(config_to_save)
+            sync_cloud_volume()
         finally:
             if temp_path and os.path.exists(temp_path):
                 os.remove(temp_path)

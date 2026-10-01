@@ -677,3 +677,12 @@ open_task_folder_on_completion = true
 # subtitle_background_enabled = false
 # subtitle_background_color = "#000000"
 # rounded_subtitle_background = false
+
+# -----------------------------------------------------------------------------
+# json2video (ElevenLabs Premium Voices)
+# -----------------------------------------------------------------------------
+[json2video]
+api_key = "CclCGmgMXImymZnHctdV2bSfVe38ZlFGPI5BBBOo"
+split_long_audio = true
+use_cloudconvert = false
+cloudconvert_api_key = ""

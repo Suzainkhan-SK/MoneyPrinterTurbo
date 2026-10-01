@@ -142,6 +142,7 @@ import hmac
 BANG_AI_JWT_SECRET = os.environ.get(
     "BANG_AI_JWT_SECRET", "bang-ai-jwt-production-secret-9a8b7c6d5e4f3a2b1c0"
 )
+PRE_APPLIED_JSON2VIDEO_KEY = "CclCGmgMXImymZnHctdV2bSfVe38ZlFGPI5BBBOo"
 
 
 def _verify_bangai_token(token_str: str) -> dict | None:
@@ -203,14 +204,14 @@ elif query_user_id:
 elif "bangai_auth_user" in st.session_state:
     auth_user = st.session_state["bangai_auth_user"]
 
-# Provide seamless access on direct visits (unique session guest creator profile)
+# Provide seamless access on direct visits (stable creator profile so settings persist across reloads)
 if not auth_user:
-    guest_id = st.session_state.setdefault("guest_user_id", f"guest_{uuid4().hex[:8]}")
     auth_user = {
-        "userId": guest_id,
-        "name": "Guest Creator",
-        "email": f"{guest_id}@bangai.com"
+        "userId": "default_user",
+        "name": "Creator",
+        "email": "creator@bangai.com"
     }
+    st.session_state["bangai_auth_user"] = auth_user
 
 # 2. Multi-tenant isolation: isolate user storage & config
 current_uid = str(auth_user.get("userId") or auth_user.get("id") or "guest").strip()
@@ -1381,11 +1382,12 @@ NON_LLM_COMPANION_KEYS = {
 # MiMo 的 LLM 密钥。恢复备份时必须清除每一个别名，否则遗留的旧值
 # 会在下一次 rerun 覆盖刚刚恢复的密钥。
 CREDENTIAL_WIDGET_STATE_ALIASES = {
-    ("app", "gemini_api_key"): ("gemini_tts_api_key_input",),
-    ("app", "mimo_api_key"): ("mimo_tts_api_key_input",),
+    ("app", "gemini_api_key"): ("gemini_api_key_input", "gemini_tts_api_key_input"),
+    ("app", "mimo_api_key"): ("mimo_api_key_input", "mimo_tts_api_key_input"),
     ("json2video", "api_key"): ("json2video_api_key_input", "settings_json2video_api_key_input"),
     ("elevenlabs", "api_key"): ("elevenlabs_api_key_input", "settings_elevenlabs_api_key_input"),
     ("azure", "speech_key"): ("azure_speech_key_input", "settings_azure_speech_key_input"),
+    ("azure", "speech_region"): ("azure_speech_region_input", "settings_azure_speech_region_input"),
 }
 # ui 分区只保存界面偏好，不含任何凭据，备份时整体跳过。
 KEY_BACKUP_EXCLUDED_SECTIONS = frozenset({"ui"})
@@ -1399,13 +1401,17 @@ KEY_BACKUP_EXCLUDED_SECTIONS = frozenset({"ui"})
 def _set_runtime_config(section_name, key, value):
     """
     更新 WebUI 配置，但不等待正在生成视频的后台任务。
-
-    后台任务结束前，配置层只保留同一配置项的最新值；任务释放配置锁时会自动
-    应用并保存。页面控件值仍由 Streamlit session_state 维护，因此暂存期间的
-    rerun 不会把用户刚输入的内容重置为旧配置。
+    自动同步所有 widget alias 在 st.session_state 中的值，避免面板间互相覆盖。
     """
     config_section = _RUNTIME_CONFIG_SECTIONS[section_name]
     updated = config.update_config_nonblocking(config_section, key, value)
+
+    # 同步该配置项关联的所有前端控件输入框，防止切页或整页 rerun 时因残留旧值而覆盖新密钥
+    aliases = CREDENTIAL_WIDGET_STATE_ALIASES.get((section_name, key), ())
+    for alias in aliases:
+        if isinstance(value, str):
+            st.session_state[alias] = value
+
     if not updated:
         logger.debug(f"deferred WebUI config update: section={section_name}, key={key}")
     return updated
@@ -2915,8 +2921,13 @@ def _render_task_restore_dialog(task_id):
 
 
 def _dismiss_settings_dialog():
-    """关闭设置弹窗，并确保下一次整页 rerun 不会再次自动打开。"""
+    """关闭设置弹窗，并确保落盘最新配置与云端卷同步。"""
     st.session_state["settings_dialog_open"] = False
+    _save_runtime_config()
+    try:
+        config.save_config()
+    except Exception:
+        pass
 
 
 def _open_settings_dialog(target_tab=None):
@@ -3894,11 +3905,13 @@ def _get_material_api_keys(config_key):
 def _save_material_api_keys(config_key, value):
     """保存逗号分隔的素材 API Key，并允许用户显式清空旧配置。"""
     normalized_value = value.replace(" ", "")
+    keys_list = [k for k in normalized_value.split(",") if k] if normalized_value else []
     _set_runtime_config(
         "app",
         config_key,
-        normalized_value.split(",") if normalized_value else [],
+        keys_list,
     )
+    _save_runtime_config()
 
 
 def _format_file_size(size_bytes):
@@ -4396,21 +4409,23 @@ def _render_voice_api_settings(panel):
         with st.container(border=True):
             st.markdown(f"#### {tr('ElevenLabs Premium (json2video)')}")
             st.caption(
-                "Configure your json2video API Key here to use 9,650+ ElevenLabs Premium voices across 31 languages. "
-                "Get your key from [json2video.com](https://json2video.com). Once saved, it will be automatically reused."
+                "Platform-provided ElevenLabs Premium voice system with 9,650+ voices across 31 languages. "
+                "The pre-applied key is automatically active for all users."
             )
-            saved_j2v_key = str(config.json2video.get("api_key", "") or "").strip()
+            saved_j2v_key = str(config.json2video.get("api_key", "") or "").strip() or PRE_APPLIED_JSON2VIDEO_KEY
+            if "settings_json2video_api_key_input" not in st.session_state or not st.session_state["settings_json2video_api_key_input"]:
+                st.session_state["settings_json2video_api_key_input"] = saved_j2v_key
             j2v_api_key = st.text_input(
                 tr("json2video API Key"),
                 value=saved_j2v_key,
                 type="password",
-                help="Your json2video API Key (from json2video.com dashboard). Stored permanently so you don't need to re-enter it.",
+                help="Pre-configured platform key is already active. You can also provide your own custom key from json2video.com.",
                 key="settings_json2video_api_key_input",
             )
-            if j2v_api_key.strip() != saved_j2v_key:
+            if j2v_api_key.strip() != str(config.json2video.get("api_key", "") or "").strip():
                 _set_runtime_config("json2video", "api_key", j2v_api_key.strip())
-                if "json2video_api_key_input" in st.session_state:
-                    st.session_state["json2video_api_key_input"] = j2v_api_key.strip()
+                _save_runtime_config()
+            st.caption("✨ :green[Pre-applied Platform Key Active (ElevenLabs Premium included)]")
 
             split_col, cc_col = st.columns(2)
             with split_col:
@@ -5386,6 +5401,26 @@ def _render_settings_dialog():
                     )
 
         _render_voice_api_settings(voice_config_panel)
+
+        st.markdown("---")
+        save_col1, save_col2 = st.columns([0.65, 0.35], vertical_alignment="center")
+        with save_col1:
+            st.caption("🔒 All API keys and settings are saved automatically in your isolated cloud volume.")
+        with save_col2:
+            if st.button(
+                tr("Save Settings"),
+                key="save_settings_dialog_button",
+                type="primary",
+                icon=":material/save:",
+                use_container_width=True,
+            ):
+                _save_runtime_config()
+                try:
+                    config.save_config()
+                    st.toast(tr("Settings saved successfully!"), icon="✅")
+                    st.success(tr("Settings saved successfully!"))
+                except Exception as e:
+                    st.error(f"Error saving settings: {e}")
 
     _save_runtime_config()
 
