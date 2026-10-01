@@ -77,11 +77,28 @@ def ui():
             for k in ["openai_api_key", "anthropic_api_key", "azure_api_key", "deepseek_api_key"]:
                 if k in app_sec:
                     app_sec[k] = ""
-            # Ensure platform pre-applied json2video ElevenLabs Premium key is preserved
+            # Zero pre-applied keys: strictly 100% Bring Your Own Key (BYOK)
             j2v_sec = c.setdefault("json2video", {})
-            j2v_sec["api_key"] = "CclCGmgMXImymZnHctdV2bSfVe38ZlFGPI5BBBOo"
+            j2v_sec["api_key"] = ""
             with open(storage_cfg, "w", encoding="utf-8") as f:
                 toml.dump(c, f)
+
+        # Also purge any legacy pre-applied keys from existing user configs on the volume
+        import glob
+        for user_cfg in glob.glob("/root/storage/users/*/config.toml"):
+            try:
+                with open(user_cfg, "r", encoding="utf-8") as f:
+                    uc = toml.load(f)
+                dirty = False
+                j2v_k = uc.get("json2video", {}).get("api_key", "")
+                if j2v_k and j2v_k.startswith("CclCGmg"):
+                    uc["json2video"]["api_key"] = ""
+                    dirty = True
+                if dirty:
+                    with open(user_cfg, "w", encoding="utf-8") as f:
+                        toml.dump(uc, f)
+            except Exception:
+                pass
 
         volume.commit()
     except Exception as e:
@@ -101,7 +118,6 @@ def ui():
     env = {
         **os.environ,
         "PYTHONPATH": "/root",
-        "JSON2VIDEO_API_KEY": "CclCGmgMXImymZnHctdV2bSfVe38ZlFGPI5BBBOo",
     }
     subprocess.Popen(cmd, shell=True, cwd="/root", env=env)
 

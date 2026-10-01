@@ -2239,20 +2239,6 @@ def _split_script_into_two_parts(text: str) -> tuple[str, str]:
     return " ".join(chunks[:mid]), " ".join(chunks[mid:])
 
 
-PRE_APPLIED_JSON2VIDEO_KEY = "CclCGmgMXImymZnHctdV2bSfVe38ZlFGPI5BBBOo"
-JSON2VIDEO_ROTATION_KEYS = [
-    "CclCGmgMXImymZnHctdV2bSfVe38ZlFGPI5BBBOo",
-    "iuCcWNHGIfA7DZshgdCG5YEJiel4qSMmNPeFU4R7",
-    "fQWgofoFFcVO9TXD351b6aAYDHedUcM2LnBrF0Gx",
-    "BfVGdb6AJiYAbFD2FNsokFDfC8eEdrDZEjAHeP6B",
-    "7iIcxBBivKYJI2Dwh8EecCteEr1LCf2c2fhwfBFk",
-    "Mcvgc3bcrXvdjCK7SeFvOLVJpdABdogswpiGwfhc",
-    "bVQPK30nOfHCtUfB7jjYO45U8mIJvZUVgrAGmeEu",
-    "HjgybeaHuss7IH0sB2EdshSlS3AS7cWXdt78w68O",
-    "E3ybUBUvDBHEFceM4QoUGxiS6vbnpL0Z87h24Xoi",
-    "dVpBkFScr1KElvbmUfcuDAENfGLUuBLb74DNr5vp",
-    "BSMCNOEbA5e4GOFOkfg9f5vYpOQR5cdUk9qPt9dV",
-]
 
 
 def _submit_and_poll_json2video_movie(
@@ -2285,43 +2271,25 @@ def _submit_and_poll_json2video_movie(
         ],
     }
 
-    # Build prioritized candidate keys to try (user custom key first, followed by rotation pool)
     clean_primary_key = (api_key or "").strip()
-    keys_to_try = [clean_primary_key] if clean_primary_key else []
-    for fallback in JSON2VIDEO_ROTATION_KEYS:
-        if fallback not in keys_to_try:
-            keys_to_try.append(fallback)
+    if not clean_primary_key:
+        raise ValueError("json2video API key is required. Please provide your API key in Settings -> Voice & Audio APIs.")
 
-    last_error = None
-    project_id = None
-    winning_key = None
-
-    for candidate_key in keys_to_try:
-        try:
-            headers = {
-                "x-api-key": candidate_key,
-                "Content-Type": "application/json",
-            }
-            logger.info(f"Submitting json2video {part_label} voiceover (voice_id: {voice_id}, text length: {len(text)}) using key ...{candidate_key[-6:]}")
-            res = requests.post(url, json=payload, headers=headers, timeout=30)
-            if res.status_code == 200:
-                data = res.json()
-                pid = data.get("project") or data.get("jobId")
-                if pid:
-                    project_id = pid
-                    winning_key = candidate_key
-                    break
-                else:
-                    last_error = f"No project ID returned: {data}"
-            else:
-                last_error = f"HTTP {res.status_code}: {res.text[:200]}"
-                logger.warning(f"json2video key ...{candidate_key[-6:]} rejected: {last_error}")
-        except Exception as e:
-            last_error = str(e)
-            logger.warning(f"json2video key ...{candidate_key[-6:]} error: {e}")
-
-    if not project_id:
-        err_msg = f"json2video {part_label} submission failed across all keys: {last_error}"
+    headers = {
+        "x-api-key": clean_primary_key,
+        "Content-Type": "application/json",
+    }
+    logger.info(f"Submitting json2video {part_label} voiceover (voice_id: {voice_id}, text length: {len(text)})")
+    res = requests.post(url, json=payload, headers=headers, timeout=30)
+    if res.status_code == 200:
+        data = res.json()
+        pid = data.get("project") or data.get("jobId")
+        if not pid:
+            raise RuntimeError(f"json2video failed to return project ID: {data}")
+        project_id = pid
+        winning_key = clean_primary_key
+    else:
+        err_msg = f"json2video API error (HTTP {res.status_code}): {res.text[:300]}"
         logger.error(err_msg)
         raise RuntimeError(err_msg)
 
@@ -2505,9 +2473,10 @@ def json2video_tts(
         return None
 
     if not api_key:
-        api_key = config.json2video.get("api_key", "") or os.environ.get("JSON2VIDEO_API_KEY", "") or PRE_APPLIED_JSON2VIDEO_KEY
+        api_key = config.json2video.get("api_key", "") or os.environ.get("JSON2VIDEO_API_KEY", "")
     if not api_key:
-        api_key = PRE_APPLIED_JSON2VIDEO_KEY
+        logger.error("json2video API key is missing. Please enter your json2video API key in Settings -> Voice & Audio APIs.")
+        raise ValueError("json2video API key is missing. Please enter your API key in Settings -> Voice & Audio APIs.")
 
     if not cloudconvert_api_key:
         cloudconvert_api_key = config.json2video.get("cloudconvert_api_key", "") or os.environ.get("CLOUDCONVERT_API_KEY", "")

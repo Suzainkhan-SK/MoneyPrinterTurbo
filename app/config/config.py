@@ -38,7 +38,6 @@ _pending_config_flush_scheduled = False
 _MISSING = object()
 _DELETE = object()
 _UTF8_BOM = "\ufeff"
-PRE_APPLIED_JSON2VIDEO_KEY = "CclCGmgMXImymZnHctdV2bSfVe38ZlFGPI5BBBOo"
 _current_active_user_id = None
 
 
@@ -511,20 +510,15 @@ def _sanitize_config_dict(cfg: dict) -> dict:
     app_sec["openai_image_api_keys"] = []
     app_sec["twelvelabs_api_keys"] = []
 
-    # Strip voice / TTS service keys (EXCEPT json2video which has the platform's pre-applied key)
+    # Strip voice / TTS service keys (zero pre-applied keys for any service, 100% BYOK)
     for sec_name in [
         "azure", "siliconflow", "minimax_tts", "elevenlabs",
-        "chatterbox", "kokoro", "fish_audio", "voxcpm"
+        "chatterbox", "kokoro", "fish_audio", "voxcpm", "json2video"
     ]:
         sec = cfg.setdefault(sec_name, {})
         for key_field in ["api_key", "speech_key", "cloudconvert_api_key"]:
             if key_field in sec:
                 sec[key_field] = ""
-
-    # Guarantee pre-applied json2video key is always present
-    j2v_sec = cfg.setdefault("json2video", {})
-    if not j2v_sec.get("api_key"):
-        j2v_sec["api_key"] = PRE_APPLIED_JSON2VIDEO_KEY
 
     # Strip personal user prompts so new users get clean input boxes
     ui_sec = cfg.setdefault("ui", {})
@@ -550,9 +544,6 @@ def load_config():
     logger.info(f"load config from file: {config_file}")
 
     loaded = _load_toml_config(config_file)
-    # Ensure json2video has pre-applied key
-    if not loaded.get("json2video", {}).get("api_key"):
-        loaded.setdefault("json2video", {})["api_key"] = PRE_APPLIED_JSON2VIDEO_KEY
 
     # Sanitize root template if any legacy test keys leaked
     legacy_keys = ("AIzaSyC_ozuedo6ueobvhbHDA6OFYa-d4uKDAKo", "wnzipdxV7TGWJQwatBQeOzMRL7LnYHbAJS09rRxwMpvuv89OSrs8B6Um")
@@ -598,10 +589,6 @@ def switch_user_config(user_id: str):
         config_file = user_config
         try:
             new_cfg = _load_toml_config(config_file)
-
-            # Ensure json2video has pre-applied key
-            if not new_cfg.get("json2video", {}).get("api_key"):
-                new_cfg.setdefault("json2video", {})["api_key"] = PRE_APPLIED_JSON2VIDEO_KEY
 
             # Security safeguard: Check if this user config still has legacy leaked test keys
             legacy_keys = ("AIzaSyC_ozuedo6ueobvhbHDA6OFYa-d4uKDAKo", "wnzipdxV7TGWJQwatBQeOzMRL7LnYHbAJS09rRxwMpvuv89OSrs8B6Um")

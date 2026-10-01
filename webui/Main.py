@@ -142,7 +142,6 @@ import hmac
 BANG_AI_JWT_SECRET = os.environ.get(
     "BANG_AI_JWT_SECRET", "bang-ai-jwt-production-secret-9a8b7c6d5e4f3a2b1c0"
 )
-PRE_APPLIED_JSON2VIDEO_KEY = "CclCGmgMXImymZnHctdV2bSfVe38ZlFGPI5BBBOo"
 
 
 def _verify_bangai_token(token_str: str) -> dict | None:
@@ -4414,23 +4413,26 @@ def _render_voice_api_settings(panel):
         with st.container(border=True):
             st.markdown(f"#### {tr('ElevenLabs Premium (json2video)')}")
             st.caption(
-                "Platform-provided ElevenLabs Premium voice system with 9,650+ voices across 31 languages. "
-                "The pre-applied key is automatically active for all users."
+                "Configure your json2video API Key here to use 9,650+ ElevenLabs Premium voices across 31 languages. "
+                "Get your key from [json2video.com](https://json2video.com). Once saved, it will be automatically reused."
             )
-            saved_j2v_key = str(config.json2video.get("api_key", "") or "").strip() or PRE_APPLIED_JSON2VIDEO_KEY
+            saved_j2v_key = str(config.json2video.get("api_key", "") or "").strip()
             if "settings_json2video_api_key_input" not in st.session_state or not st.session_state["settings_json2video_api_key_input"]:
                 st.session_state["settings_json2video_api_key_input"] = saved_j2v_key
             j2v_api_key = st.text_input(
                 tr("json2video API Key"),
                 value=saved_j2v_key,
                 type="password",
-                help="Pre-configured platform key is already active. You can also provide your own custom key from json2video.com.",
+                help="Your json2video API Key (from json2video.com dashboard). Stored permanently so you don't need to re-enter it.",
                 key="settings_json2video_api_key_input",
             )
             if j2v_api_key.strip() != str(config.json2video.get("api_key", "") or "").strip():
                 _set_runtime_config("json2video", "api_key", j2v_api_key.strip())
                 _save_runtime_config()
-            st.caption("✨ :green[Pre-applied Platform Key Active (ElevenLabs Premium included)]")
+            if saved_j2v_key:
+                st.caption(":green[API Key loaded from persistent Settings]")
+            else:
+                st.caption("Tip: Enter your key above, or save it permanently in **Settings -> Voice & Audio APIs** so you never have to re-enter it.")
 
             split_col, cc_col = st.columns(2)
             with split_col:
@@ -8903,7 +8905,7 @@ def _render_audio_settings(panel, params):
                 selected_tts_server == "json2video"
                 or (voice_name and voice.is_json2video_voice(voice_name))
             ):
-                saved_json2video_api_key = str(config.json2video.get("api_key", "") or "").strip() or PRE_APPLIED_JSON2VIDEO_KEY
+                saved_json2video_api_key = str(config.json2video.get("api_key", "") or "").strip()
                 key_col1, key_col2 = st.columns([0.84, 0.16], gap="small", vertical_alignment="bottom")
                 with key_col1:
                     json2video_api_key = st.text_input(
@@ -8911,7 +8913,7 @@ def _render_audio_settings(panel, params):
                         value=saved_json2video_api_key,
                         type="password",
                         key="json2video_api_key_input",
-                        help="Platform pre-configured key is already active. You can also enter a custom key from json2video.com.",
+                        help="Your json2video API Key (from json2video.com dashboard). Stored permanently in Settings.",
                     )
                     if json2video_api_key.strip() != str(config.json2video.get("api_key", "") or "").strip():
                         _set_runtime_config("json2video", "api_key", json2video_api_key.strip())
@@ -8924,7 +8926,10 @@ def _render_audio_settings(panel, params):
                         on_click=_open_voice_settings_dialog,
                     )
 
-                st.caption("✨ :green[Pre-applied Platform Key Active (ElevenLabs Premium included)]")
+                if saved_json2video_api_key:
+                    st.caption(":green[API Key loaded from persistent Settings]")
+                else:
+                    st.caption("Tip: Enter your key above, or save it permanently in **Settings -> Voice & Audio APIs** so you never have to re-enter it.")
 
                 split_col, cc_col = st.columns(2)
                 with split_col:

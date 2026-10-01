@@ -682,7 +682,7 @@ open_task_folder_on_completion = true
 # json2video (ElevenLabs Premium Voices)
 # -----------------------------------------------------------------------------
 [json2video]
-api_key = "CclCGmgMXImymZnHctdV2bSfVe38ZlFGPI5BBBOo"
+api_key = ""
 split_long_audio = true
 use_cloudconvert = false
 cloudconvert_api_key = ""
