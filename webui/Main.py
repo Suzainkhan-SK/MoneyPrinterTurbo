@@ -725,7 +725,12 @@ div[data-testid="stPopoverBody"] {
     background-color: #fffefb !important;
     border: 1px solid #c5c0b1 !important;
     box-shadow: 0 16px 40px rgba(32, 21, 21, 0.12) !important;
-    border-radius: 12px !important;
+    border-radius: 14px !important;
+    max-width: 96vw !important;
+    width: max-content !important;
+}
+div[data-testid="stPopoverBody"] > div {
+    max-width: 100% !important;
 }
 </style>""",
         unsafe_allow_html=True,
@@ -1102,7 +1107,12 @@ div[data-testid="stPopoverBody"] {
     background-color: #251c1c !important;
     border: 1px solid rgba(255, 255, 255, 0.14) !important;
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.65) !important;
-    border-radius: 12px !important;
+    border-radius: 14px !important;
+    max-width: 96vw !important;
+    width: max-content !important;
+}
+div[data-testid="stPopoverBody"] > div {
+    max-width: 100% !important;
 }
 </style>""",
         unsafe_allow_html=True,
@@ -2675,48 +2685,6 @@ def _render_task_table(filtered_tasks, key_prefix):
                                 st.error(tr("Task Delete Failed"))
 
 
-def _get_quick_restyle_voice_options(current_voice=""):
-    options = []
-    seen = set()
-    if current_voice:
-        options.append(current_voice)
-        seen.add(current_voice)
-
-    # Top ElevenLabs Premium json2video voices
-    try:
-        j2v_all = voice.get_json2video_voices()
-        for v in j2v_all[:35]:
-            if v not in seen:
-                options.append(v)
-                seen.add(v)
-    except Exception:
-        pass
-
-    # Top Edge TTS voices (Hindi, English US/UK/IN, etc.)
-    top_edge = [
-        "hi-IN-MadhurNeural-Male",
-        "hi-IN-SwaraNeural-Female",
-        "en-US-JennyNeural-Female",
-        "en-US-GuyNeural-Male",
-        "en-US-AriaNeural-Female",
-        "en-US-ChristopherNeural-Male",
-        "en-US-EricNeural-Male",
-        "en-GB-SoniaNeural-Female",
-        "en-GB-RyanNeural-Male",
-        "en-IN-NeerjaNeural-Female",
-        "en-IN-PrabhatNeural-Male",
-        "es-ES-ElviraNeural-Female",
-        "fr-FR-DeniseNeural-Female",
-        "de-DE-KatjaNeural-Female",
-    ]
-    for v in top_edge:
-        if v not in seen:
-            options.append(v)
-            seen.add(v)
-
-    return options
-
-
 def _format_quick_voice_label(v: str) -> str:
     if not v:
         return tr("Default Voice")
@@ -2730,12 +2698,153 @@ def _format_quick_voice_label(v: str) -> str:
         return f"✨ {label} [ElevenLabs]"
     if voice.is_kokoro_voice(v):
         return f"🎙️ {v.replace('kokoro:', '')} [Kokoro]"
+    if voice.is_gemini_voice(v):
+        return f"💎 {v.replace('gemini:', '')} [Gemini]"
+    if voice.is_minimax_voice(v):
+        return f"⚡ {v.replace('minimax:', '')} [MiniMax]"
     clean = (
         v.replace("Neural-Female", " (Female)")
         .replace("Neural-Male", " (Male)")
         .replace("Neural", "")
     )
     return f"🌐 {clean} [Edge TTS]"
+
+
+def _render_quick_restyle_voice_selector(curr_voice: str, task_id: str) -> str:
+    default_provider = "Edge TTS (Free Multi-lingual)"
+    if voice.is_json2video_voice(curr_voice):
+        default_provider = "ElevenLabs Premium (json2video)"
+    elif curr_voice.startswith("kokoro:"):
+        default_provider = "Kokoro TTS"
+    elif voice.is_gemini_voice(curr_voice):
+        default_provider = "Gemini TTS"
+    elif voice.is_minimax_voice(curr_voice):
+        default_provider = "MiniMax TTS"
+
+    providers = [
+        "Edge TTS (Free Multi-lingual)",
+        "ElevenLabs Premium (json2video)",
+        "Kokoro TTS",
+        "Gemini TTS",
+        "MiniMax TTS",
+        "All Voices",
+    ]
+    prov_idx = providers.index(default_provider) if default_provider in providers else 0
+
+    p_cols = st.columns([1.1, 1.1], gap="small")
+    with p_cols[0]:
+        selected_provider = st.selectbox(
+            tr("TTS Provider"),
+            options=providers,
+            index=prov_idx,
+            key=f"restyle_prov_{task_id}",
+        )
+
+    with p_cols[1]:
+        if selected_provider == "ElevenLabs Premium (json2video)":
+            j2v_langs = voice.get_json2video_languages()
+            selected_lang = st.selectbox(
+                tr("Filter Language"),
+                options=j2v_langs,
+                index=0,
+                key=f"restyle_j2v_lang_{task_id}",
+            )
+        elif selected_provider == "Edge TTS (Free Multi-lingual)":
+            edge_langs = [
+                "All Languages", "English (US)", "English (UK)", "English (IN)", "Hindi (IN)",
+                "Spanish", "French", "German", "Japanese", "Chinese", "Arabic", "Portuguese", "Russian",
+                "Italian", "Korean", "Turkish"
+            ]
+            selected_lang = st.selectbox(
+                tr("Filter Language"),
+                options=edge_langs,
+                index=0,
+                key=f"restyle_edge_lang_{task_id}",
+            )
+        else:
+            selected_lang = "All"
+
+    # Build comprehensive voice list
+    voice_options = []
+    if selected_provider == "ElevenLabs Premium (json2video)":
+        voice_options = voice.get_json2video_voices(filter_language=selected_lang)
+    elif selected_provider == "Edge TTS (Free Multi-lingual)":
+        all_edge = voice.get_all_azure_voices()
+        if selected_lang == "English (US)":
+            voice_options = [v for v in all_edge if v.startswith("en-US-")]
+        elif selected_lang == "English (UK)":
+            voice_options = [v for v in all_edge if v.startswith("en-GB-")]
+        elif selected_lang == "English (IN)":
+            voice_options = [v for v in all_edge if v.startswith("en-IN-")]
+        elif selected_lang == "Hindi (IN)":
+            voice_options = [v for v in all_edge if v.startswith("hi-IN-")]
+        elif selected_lang == "Spanish":
+            voice_options = [v for v in all_edge if v.startswith("es-")]
+        elif selected_lang == "French":
+            voice_options = [v for v in all_edge if v.startswith("fr-")]
+        elif selected_lang == "German":
+            voice_options = [v for v in all_edge if v.startswith("de-")]
+        elif selected_lang == "Japanese":
+            voice_options = [v for v in all_edge if v.startswith("ja-")]
+        elif selected_lang == "Chinese":
+            voice_options = [v for v in all_edge if v.startswith("zh-")]
+        elif selected_lang == "Arabic":
+            voice_options = [v for v in all_edge if v.startswith("ar-")]
+        elif selected_lang == "Portuguese":
+            voice_options = [v for v in all_edge if v.startswith("pt-")]
+        elif selected_lang == "Russian":
+            voice_options = [v for v in all_edge if v.startswith("ru-")]
+        elif selected_lang == "Italian":
+            voice_options = [v for v in all_edge if v.startswith("it-")]
+        elif selected_lang == "Korean":
+            voice_options = [v for v in all_edge if v.startswith("ko-")]
+        elif selected_lang == "Turkish":
+            voice_options = [v for v in all_edge if v.startswith("tr-")]
+        else:
+            voice_options = all_edge
+    elif selected_provider == "Kokoro TTS":
+        try:
+            voice_options = voice.get_kokoro_voices()
+        except Exception:
+            voice_options = []
+    elif selected_provider == "Gemini TTS":
+        voice_options = [f"gemini:{name}" for name, _ in voice.GEMINI_TTS_VOICES]
+    elif selected_provider == "MiniMax TTS":
+        voice_options = [f"minimax:{m}" for m in voice.MINIMAX_TTS_MODELS]
+    else:  # All Voices
+        voice_options = voice.get_all_azure_voices() + voice.get_json2video_voices()
+
+    if not voice_options:
+        voice_options = [curr_voice] if curr_voice else ["en-US-JennyNeural-Female"]
+
+    # Prepend curr_voice if not in options list so it is always selected
+    if curr_voice and curr_voice not in voice_options:
+        voice_options.insert(0, curr_voice)
+
+    v_idx = voice_options.index(curr_voice) if curr_voice in voice_options else 0
+    selected_voice = st.selectbox(
+        tr("Voice Name"),
+        options=voice_options,
+        index=v_idx,
+        format_func=_format_quick_voice_label,
+        key=f"restyle_voice_{task_id}",
+        help="Select any voice from all available voice models to re-render in ~30s",
+    )
+
+    if voice.is_json2video_voice(selected_voice):
+        cur_j2v_key = str(config.json2video.get("api_key", "") or "").strip()
+        if not cur_j2v_key:
+            j2v_key_input = st.text_input(
+                "🔑 json2video API Key (Required for ElevenLabs voices)",
+                value=cur_j2v_key,
+                type="password",
+                key=f"restyle_j2v_key_input_{task_id}",
+                help="Enter your json2video API key to use ElevenLabs voices",
+            )
+            if j2v_key_input and j2v_key_input.strip():
+                config.json2video["api_key"] = j2v_key_input.strip()
+
+    return selected_voice
 
 
 def _render_task_status_tabs(tasks):
@@ -2777,7 +2886,7 @@ def _render_task_manager_panel(tasks=None):
     )
 
     if has_preview:
-        col_tasks, col_preview = st.columns([1.15, 1.0], gap="medium")
+        col_tasks, col_preview = st.columns([1.0, 1.25], gap="large")
         with col_tasks:
             _render_task_status_tabs(tasks)
         with col_preview:
@@ -2811,10 +2920,16 @@ def _render_task_video_preview():
     )
     if closed:
         st.session_state.pop("task_preview_video_file", None)
-        st.rerun()
+        st.rerun(scope="app")
         return
 
-    st.video(preview_file)
+    # Pass bytes directly to st.video for 100% reliable cache-busting
+    if os.path.isfile(preview_file):
+        with open(preview_file, "rb") as vf:
+            st.video(vf.read())
+    else:
+        st.video(preview_file)
+
     task_dir_path = os.path.dirname(preview_file)
     task_id = os.path.basename(task_dir_path)
     download_name = os.path.basename(preview_file)
@@ -2823,9 +2938,10 @@ def _render_task_video_preview():
     with btn_cols[0]:
         try:
             with open(preview_file, "rb") as vf:
+                file_bytes = vf.read()
                 st.download_button(
                     label=f"⬇️ {tr('Download Video')}",
-                    data=vf,
+                    data=file_bytes,
                     file_name=download_name,
                     mime="video/mp4",
                     key=f"download_preview_btn_{task_id}",
@@ -2875,6 +2991,11 @@ def _render_task_video_preview():
                 st.rerun(scope="app")
 
     combined_path = os.path.join(task_dir_path, "combined-1.mp4")
+    if not os.path.isfile(combined_path):
+        c_cand = [os.path.join(task_dir_path, f) for f in os.listdir(task_dir_path) if f.startswith("combined") and f.endswith(".mp4")]
+        if c_cand:
+            combined_path = sorted(c_cand)[0]
+
     audio_path = os.path.join(task_dir_path, "audio.mp3")
     subtitle_path = os.path.join(task_dir_path, "subtitle.srt")
 
@@ -2894,19 +3015,10 @@ def _render_task_video_preview():
             curr_narration = current_script.get("script") or c_params.get("video_script", "")
 
             st.markdown(f"**🎙️ {tr('Voice & Narration')}**")
-            voice_cols = st.columns([1.8, 1.2])
-            with voice_cols[0]:
-                voice_options = _get_quick_restyle_voice_options(curr_voice)
-                v_idx = voice_options.index(curr_voice) if curr_voice in voice_options else 0
-                selected_voice = st.selectbox(
-                    tr("Voice Name"),
-                    options=voice_options,
-                    index=v_idx,
-                    format_func=_format_quick_voice_label,
-                    key=f"restyle_voice_{task_id}",
-                    help="Select a different voice for instant re-render (~30s)",
-                )
-            with voice_cols[1]:
+            selected_voice = _render_quick_restyle_voice_selector(curr_voice, task_id)
+
+            rate_and_speech_cols = st.columns([1, 1])
+            with rate_and_speech_cols[0]:
                 selected_rate = st.slider(
                     tr("Speech Rate"),
                     min_value=0.7,
@@ -3010,6 +3122,10 @@ def _render_task_video_preview():
             )
 
             if st.button("⚡ Fast Re-render (~30s)", key=f"restyle_btn_{task_id}", type="primary", use_container_width=True):
+                # Ensure json2video api key is synced from session state
+                _sync_json2video_api_key_input("json2video_api_key_input")
+                _sync_json2video_api_key_input("settings_json2video_api_key_input")
+
                 is_voice_changed = (selected_voice != curr_voice)
                 is_rate_changed = abs(selected_rate - curr_rate) > 0.04
                 is_script_changed = bool(edited_narration.strip() and edited_narration.strip() != curr_narration.strip())
@@ -3018,29 +3134,33 @@ def _render_task_video_preview():
                 tts_ok = True
                 if need_tts:
                     with st.spinner("🎙️ Synthesizing new voiceover audio..."):
-                        tts_script = edited_narration.strip() or curr_narration.strip()
-                        new_sub_maker = voice.tts(
-                            text=tts_script,
-                            voice_name=voice.parse_voice_name(selected_voice),
-                            voice_rate=selected_rate,
-                            voice_file=audio_path,
-                        )
-                        if new_sub_maker is None:
-                            tts_ok = False
-                            st.error("Audio synthesis failed. Please verify your selected voice and API key connectivity.")
-                        else:
-                            is_word_level = (c_params.get("subtitle_display_mode") == "word_by_word")
-                            voice.create_subtitle(
+                        try:
+                            tts_script = edited_narration.strip() or curr_narration.strip()
+                            new_sub_maker = voice.tts(
                                 text=tts_script,
-                                sub_maker=new_sub_maker,
-                                subtitle_file=subtitle_path,
-                                word_level=is_word_level,
+                                voice_name=voice.parse_voice_name(selected_voice),
+                                voice_rate=selected_rate,
+                                voice_file=audio_path,
                             )
-                            try:
-                                with open(subtitle_path, "r", encoding="utf-8") as sf:
-                                    edited_subs = sf.read()
-                            except Exception:
-                                pass
+                            if new_sub_maker is None:
+                                tts_ok = False
+                                st.error("Audio synthesis returned empty result. Please verify your selected voice and API key connectivity.")
+                            else:
+                                is_word_level = (c_params.get("subtitle_display_mode") == "word_by_word")
+                                voice.create_subtitle(
+                                    text=tts_script,
+                                    sub_maker=new_sub_maker,
+                                    subtitle_file=subtitle_path,
+                                    word_level=is_word_level,
+                                )
+                                try:
+                                    with open(subtitle_path, "r", encoding="utf-8") as sf:
+                                        edited_subs = sf.read()
+                                except Exception:
+                                    pass
+                        except Exception as tts_exc:
+                            tts_ok = False
+                            st.error(f"Voice synthesis failed: {tts_exc}")
 
                 if tts_ok:
                     with st.spinner(tr("Re-rendering video with fast hardware FFmpeg...")):
@@ -3056,30 +3176,62 @@ def _render_task_video_preview():
                             updated_subtitles_text=edited_subs,
                             voice_name=selected_voice,
                             voice_rate=selected_rate,
+                            video_file=preview_file,
                         )
                         if ok:
-                            if is_script_changed:
-                                try:
-                                    script_file = os.path.join(task_dir_path, "script.json")
-                                    if os.path.isfile(script_file):
-                                        with open(script_file, "r", encoding="utf-8") as sf:
-                                            sdata = json.load(sf)
+                            # 1. Update script.json
+                            try:
+                                script_file = os.path.join(task_dir_path, "script.json")
+                                if os.path.isfile(script_file):
+                                    with open(script_file, "r", encoding="utf-8") as sf:
+                                        sdata = json.load(sf)
+                                    if is_script_changed:
                                         sdata["script"] = edited_narration.strip()
                                         sdata.setdefault("params", {})["video_script"] = edited_narration.strip()
-                                        with open(script_file, "w", encoding="utf-8") as sf:
-                                            json.dump(sdata, sf, ensure_ascii=False, indent=2)
-                                except Exception as e:
-                                    logger.warning(f"failed to update script text in script.json: {e}")
+                                    sdata.setdefault("params", {})["voice_name"] = selected_voice
+                                    sdata.setdefault("params", {})["voice_rate"] = selected_rate
+                                    with open(script_file, "w", encoding="utf-8") as sf:
+                                        json.dump(sdata, sf, ensure_ascii=False, indent=2)
+                            except Exception as e:
+                                logger.warning(f"failed to update script text in script.json: {e}")
+
+                            # 2. Update state.json & sm.state
+                            now_ts = time.time()
+                            try:
+                                state_file = os.path.join(task_dir_path, "state.json")
+                                stdata = {}
+                                if os.path.isfile(state_file):
+                                    with open(state_file, "r", encoding="utf-8") as sf:
+                                        stdata = json.load(sf)
+                                stdata["videos"] = [preview_file]
+                                stdata["voice_name"] = selected_voice
+                                stdata["voice_rate"] = selected_rate
+                                stdata["mtime"] = now_ts
+                                with open(state_file, "w", encoding="utf-8") as sf:
+                                    json.dump(stdata, sf, ensure_ascii=False, indent=2)
+                            except Exception as e:
+                                logger.warning(f"failed to update state.json: {e}")
+
+                            try:
+                                sm_task = sm.state.get_task(task_id) or {}
+                                sm_task["videos"] = [preview_file]
+                                sm_task["mtime"] = now_ts
+                                sm.state.update_task(task_id, sm_task)
+                            except Exception:
+                                pass
+
+                            # 3. Synchronize canvas and task preview state
+                            st.session_state["current_generation_task_id"] = task_id
+                            st.session_state["task_preview_video_file"] = preview_file
+                            st.session_state["task_preview_nonce"] = now_ts
                             st.toast("🎉 Video re-rendered successfully!", icon="✅")
-                            st.rerun()
+                            st.rerun(scope="app")
                         else:
                             st.error(f"Re-render failed: {msg}")
 
 
 @st.fragment(run_every="3s")
 def _render_task_manager_entry():
-    # 任务可能由当前页面或其它页面触发生成。入口单独用 fragment 定时刷新，
-    # 只更新任务数量和 popover 内容，不打断主页面表单输入。
     task_summaries = _collect_task_summaries()
     processing_task_count = _count_processing_tasks(task_summaries)
     if processing_task_count > 0:
@@ -3092,7 +3244,7 @@ def _render_task_manager_entry():
         and preview_file.startswith(tasks_root + os.sep)
         and os.path.isfile(preview_file)
     )
-    popover_width = 1150 if has_preview else "content"
+    popover_width = 1450 if has_preview else 950
 
     with st.container(key="task_manager_entry", width=popover_width):
         with st.popover(

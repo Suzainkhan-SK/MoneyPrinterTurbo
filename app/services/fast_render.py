@@ -38,22 +38,33 @@ def fast_restyle_task(
     updated_subtitles_text: str | None = None,
     voice_name: str | None = None,
     voice_rate: float | None = None,
+    video_file: str | None = None,
 ) -> tuple[bool, str]:
     """
     Fast hardware-accelerated re-rendering of final video with updated subtitles and voice.
     Takes existing combined-1.mp4 and audio.mp3, burns updated subtitles via multi-threaded
     FFmpeg, and updates final-1.mp4 in ~30s.
     """
+    import time
     if not os.path.isdir(task_path):
         return False, f"Task directory not found: {task_path}"
 
     combined_mp4 = os.path.join(task_path, "combined-1.mp4")
+    if not os.path.isfile(combined_mp4):
+        candidates = [
+            os.path.join(task_path, f)
+            for f in os.listdir(task_path)
+            if f.startswith("combined") and f.endswith(".mp4")
+        ]
+        if candidates:
+            combined_mp4 = sorted(candidates)[0]
+        else:
+            return False, "combined-1.mp4 not found. Full render required first."
+
     audio_mp3 = os.path.join(task_path, "audio.mp3")
     subtitle_srt = os.path.join(task_path, "subtitle.srt")
-    final_mp4 = os.path.join(task_path, "final-1.mp4")
+    final_mp4 = video_file if (video_file and os.path.isfile(video_file)) else os.path.join(task_path, "final-1.mp4")
 
-    if not os.path.isfile(combined_mp4):
-        return False, "combined-1.mp4 not found. Full render required first."
     if not os.path.isfile(audio_mp3):
         return False, "audio.mp3 not found."
     if not os.path.isfile(subtitle_srt):
@@ -143,14 +154,34 @@ def fast_restyle_task(
     if not os.path.isfile(temp_final) or os.path.getsize(temp_final) < 10000:
         return False, "Rendered file is missing or invalid."
 
-    try:
-        shutil.move(temp_final, final_mp4)
-    except Exception as e:
-        # On Windows, os.replace can replace existing files atomically
+    # Atomically replace final file with retry and copy fallback
+    replaced = False
+    last_err = ""
+    for attempt in range(6):
         try:
+            if os.path.isfile(final_mp4):
+                try:
+                    os.remove(final_mp4)
+                except Exception:
+                    pass
             os.replace(temp_final, final_mp4)
+            replaced = True
+            break
+        except Exception as err:
+            last_err = str(err)
+            time.sleep(0.3)
+
+    if not replaced:
+        try:
+            shutil.copyfile(temp_final, final_mp4)
+            if os.path.isfile(temp_final):
+                try:
+                    os.remove(temp_final)
+                except Exception:
+                    pass
+            replaced = True
         except Exception as e2:
-            return False, f"Failed to update final-1.mp4: {e2}"
+            return False, f"Failed to update final video file: {e2 or last_err}"
 
     # Update script.json params with new subtitle styling and voice
     script_file = os.path.join(task_path, "script.json")
