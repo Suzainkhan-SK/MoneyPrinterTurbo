@@ -138,7 +138,7 @@ class _MultiTenantConfigSection(dict):
         self._section_name = section_name
 
     def _active_dict(self) -> dict:
-        uid = getattr(_thread_local, "active_user_id", None) or _current_active_user_id
+        uid = utils.get_current_user_id() or getattr(_thread_local, "active_user_id", None) or _current_active_user_id
         if uid and uid in _user_registry:
             sections = _user_registry[uid].get("sections", {})
             if self._section_name in sections:
@@ -744,6 +744,7 @@ def switch_user_config(user_id: str):
     if not user_id:
         return
     clean_uid = str(user_id).strip()
+    utils.set_current_user_id(clean_uid)
     _thread_local.active_user_id = clean_uid
     _current_active_user_id = clean_uid
 
@@ -832,7 +833,7 @@ def save_config(user_id: str | None = None):
     Includes all configuration sections and synchronizes cloud storage volume.
     """
     with _config_save_lock:
-        uid = user_id or getattr(_thread_local, "active_user_id", None) or _current_active_user_id
+        uid = user_id or utils.get_current_user_id() or getattr(_thread_local, "active_user_id", None) or _current_active_user_id
         target_file = config_file
         if uid and uid in _user_registry:
             target_file = _user_registry[uid]["config_file"]

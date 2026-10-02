@@ -3183,9 +3183,12 @@ def _render_task_restore_dialog(task_id):
 def _dismiss_settings_dialog():
     """关闭设置弹窗，并确保落盘最新配置与云端卷同步。"""
     st.session_state["settings_dialog_open"] = False
+    current_dialog_j2v = str(st.session_state.get("settings_json2video_api_key_input", "") or "").strip()
+    configured = str(config.json2video.get("api_key", "") or "").strip()
+    if current_dialog_j2v and current_dialog_j2v != configured:
+        _set_runtime_config("json2video", "api_key", current_dialog_j2v)
+        st.session_state["json2video_api_key_input"] = current_dialog_j2v
     _save_runtime_config()
-    st.session_state["_synced_json2video_api_key_input"] = None
-    st.session_state["_synced_settings_json2video_api_key_input"] = None
 
 
 def _open_settings_dialog(target_tab=None):
@@ -4664,9 +4667,9 @@ def _render_key_backup_settings(panel):
 def _sync_json2video_api_key_input(widget_key="json2video_api_key_input"):
     """
     同步 json2video 密钥在主页面和设置弹窗控件中的状态。
-    确保无论用户在设置弹窗中输入保存，还是在主页面输入保存，两处输入框与底层配置均能即时双向同步，
-    并且防止 Streamlit 在标签重连或 rerun 时因旧的空控件状态误清空用户已保存的密钥。
     纯 BYOK 模式：不加载任何平台预置密钥或环境变量。
+    若 session_state 为空且持久化配置中有已保存密钥，则回填控件；
+    切勿在预渲染同步阶段盲目用控件的旧 session 值反向覆盖配置，以防止多控件或切页时新保存的密钥被旧值回滚。
     """
     configured_key = str(config.json2video.get("api_key", "") or "").strip()
     if configured_key and (configured_key.startswith("5RBJDXZf") or configured_key.startswith("qGkUqZ4r")):
@@ -4674,30 +4677,18 @@ def _sync_json2video_api_key_input(widget_key="json2video_api_key_input"):
         config.json2video["api_key"] = ""
         _save_runtime_config()
 
-    effective_key = configured_key
-    had_widget_state = widget_key in st.session_state
     current_val = str(st.session_state.get(widget_key, "") or "").strip()
     if current_val and (current_val.startswith("5RBJDXZf") or current_val.startswith("qGkUqZ4r")):
         current_val = ""
         st.session_state[widget_key] = ""
 
-    last_synced = st.session_state.get(f"_synced_{widget_key}")
-
-    # 1. 如果有效配置发生了变化（例如在设置面板中更新，或从文件加载）：
-    if effective_key != last_synced:
-        st.session_state[widget_key] = effective_key
-        st.session_state[f"_synced_{widget_key}"] = effective_key
-        current_val = effective_key
-    # 2. 如果控件会话为空，但底层配置有有效密钥（防止重连空状态清空配置）：
-    elif not current_val and effective_key:
-        st.session_state[widget_key] = effective_key
-        st.session_state[f"_synced_{widget_key}"] = effective_key
-        current_val = effective_key
-    elif not had_widget_state:
+    # 只有首次渲染或会话重连导致控件状态为空时，才从持久化配置中回填
+    if not current_val and configured_key:
+        st.session_state[widget_key] = configured_key
+    elif widget_key not in st.session_state:
         st.session_state[widget_key] = current_val
-        st.session_state[f"_synced_{widget_key}"] = current_val
 
-    return current_val
+    return configured_key
 
 
 def _render_voice_api_settings(panel):
@@ -4716,15 +4707,21 @@ def _render_voice_api_settings(panel):
                 help="Your json2video API Key (from json2video.com dashboard). Stored permanently so you don't need to re-enter it.",
                 key="settings_json2video_api_key_input",
             )
-            if j2v_api_key.strip() != saved_j2v_key:
-                new_key = j2v_api_key.strip()
+            entered_j2v = j2v_api_key.strip()
+            if entered_j2v and (entered_j2v.startswith("5RBJDXZf") or entered_j2v.startswith("qGkUqZ4r")):
+                entered_j2v = ""
+                st.session_state["settings_json2video_api_key_input"] = ""
+
+            current_config_key = str(config.json2video.get("api_key", "") or "").strip()
+            if entered_j2v != current_config_key:
+                new_key = entered_j2v
                 _set_runtime_config("json2video", "api_key", new_key)
                 _save_runtime_config()
-                st.session_state["_synced_settings_json2video_api_key_input"] = new_key
-                st.session_state["_synced_json2video_api_key_input"] = None
-                pending = st.session_state.setdefault("_pending_widget_sync", {})
-                pending["json2video_api_key_input"] = new_key
+                # 立即同步到主页面的音频设置控件状态，防止切页或整页 rerun 时因残留旧值而覆盖新密钥
+                st.session_state["json2video_api_key_input"] = new_key
                 saved_j2v_key = new_key
+            else:
+                saved_j2v_key = current_config_key
 
             if saved_j2v_key:
                 st.caption(":green[✓ API Key saved & active]")
@@ -5823,9 +5820,12 @@ def _render_settings_dialog():
                 icon=":material/save:",
                 use_container_width=True,
             ):
+                current_dialog_j2v = str(st.session_state.get("settings_json2video_api_key_input", "") or "").strip()
+                configured = str(config.json2video.get("api_key", "") or "").strip()
+                if current_dialog_j2v != configured:
+                    _set_runtime_config("json2video", "api_key", current_dialog_j2v)
+                    st.session_state["json2video_api_key_input"] = current_dialog_j2v
                 _save_runtime_config()
-                st.session_state["_synced_json2video_api_key_input"] = None
-                st.session_state["_synced_settings_json2video_api_key_input"] = None
                 st.toast(tr("Settings saved successfully!"), icon="✅")
                 st.success(tr("Settings saved successfully!"))
                 st.rerun(scope="app")
@@ -9315,15 +9315,20 @@ def _render_audio_settings(panel, params):
                         key="json2video_api_key_input",
                         help="Your json2video API Key (from json2video.com dashboard). Stored permanently in Settings.",
                     )
-                    if json2video_api_key.strip() != saved_json2video_api_key:
-                        new_key = json2video_api_key.strip()
+                    entered_main_j2v = json2video_api_key.strip()
+                    if entered_main_j2v and (entered_main_j2v.startswith("5RBJDXZf") or entered_main_j2v.startswith("qGkUqZ4r")):
+                        entered_main_j2v = ""
+                        st.session_state["json2video_api_key_input"] = ""
+
+                    current_j2v_key = str(config.json2video.get("api_key", "") or "").strip()
+                    if entered_main_j2v != current_j2v_key:
+                        new_key = entered_main_j2v
                         _set_runtime_config("json2video", "api_key", new_key)
                         _save_runtime_config()
-                        st.session_state["_synced_json2video_api_key_input"] = new_key
-                        st.session_state["_synced_settings_json2video_api_key_input"] = None
-                        pending = st.session_state.setdefault("_pending_widget_sync", {})
-                        pending["settings_json2video_api_key_input"] = new_key
+                        st.session_state["settings_json2video_api_key_input"] = new_key
                         saved_json2video_api_key = new_key
+                    else:
+                        saved_json2video_api_key = current_j2v_key
                 with key_col2:
                     st.button(
                         "⚙️",
