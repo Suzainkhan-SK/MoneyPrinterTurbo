@@ -1032,6 +1032,27 @@ def _get_downloaded_video_duration(video_path: str) -> float:
     return duration
 
 
+def _validate_video_file(video_path: str) -> bool:
+    """Validate that the video file exists and can be parsed by MoviePy with positive duration and fps."""
+    if not video_path or not os.path.exists(video_path) or not os.path.isfile(video_path) or os.path.getsize(video_path) == 0:
+        return False
+    clip = None
+    try:
+        clip = VideoFileClip(video_path)
+        duration = getattr(clip, "duration", 0) or 0
+        fps = getattr(clip, "fps", 0) or 0
+        return duration > 0 and fps > 0
+    except Exception as e:
+        logger.warning(f"video validation failed for {video_path}: {e}")
+        return False
+    finally:
+        if clip is not None:
+            try:
+                clip.close()
+            except Exception:
+                pass
+
+
 def save_video(video_url: str, save_dir: str = "") -> str:
     if not save_dir:
         save_dir = utils.storage_dir("cache_videos")
@@ -1044,51 +1065,64 @@ def save_video(video_url: str, save_dir: str = "") -> str:
     video_id = f"vid-{url_hash}"
     video_path = f"{save_dir}/{video_id}.mp4"
 
-    # if video already exists, return the path
+    # if video already exists, verify that it is fully readable and not corrupted
     if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
-        logger.info(f"video already exists: {video_path}")
-        return video_path
+        if _validate_video_file(video_path):
+            logger.info(f"valid cached video already exists: {video_path}")
+            return video_path
+        logger.warning(
+            f"existing cached video is corrupted or unreadable: {video_path}, removing to re-download"
+        )
+        try:
+            os.remove(video_path)
+        except Exception:
+            pass
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
     }
 
-    # if video does not exist, download it
-    with open(video_path, "wb") as f:
-        f.write(
-            requests.get(
-                video_url,
-                headers=headers,
-                proxies=config.proxy,
-                verify=_get_tls_verify(),
-                timeout=(60, 240),
-            ).content
+    # if video does not exist or was corrupted, download it
+    try:
+        resp = requests.get(
+            video_url,
+            headers=headers,
+            proxies=config.proxy,
+            verify=_get_tls_verify(),
+            timeout=(60, 240),
         )
+        status_code = getattr(resp, "status_code", 200)
+        if status_code and (status_code < 200 or status_code >= 400):
+            logger.error(f"failed to download video from {video_url}: HTTP {status_code}")
+            return ""
 
-    if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
-        clip = None
+        content = getattr(resp, "content", b"")
+        if not content:
+            logger.error(f"empty response content for video: {video_url}")
+            return ""
+
+        with open(video_path, "wb") as f:
+            f.write(content)
+    except Exception as download_error:
+        logger.error(f"failed to download video from {video_url}: {download_error}")
         try:
-            clip = VideoFileClip(video_path)
-            duration = clip.duration
-            fps = clip.fps
-            if duration > 0 and fps > 0:
-                return video_path
-        except Exception as e:
-            logger.warning(f"invalid video file: {video_path} => {str(e)}")
-            try:
+            if os.path.exists(video_path):
                 os.remove(video_path)
-            except Exception as remove_error:
-                logger.warning(
-                    f"failed to remove invalid video file: {video_path}, error: {str(remove_error)}"
-                )
-        finally:
-            if clip is not None:
-                try:
-                    clip.close()
-                except Exception as close_error:
-                    logger.warning(
-                        f"failed to close video clip: {video_path}, error: {str(close_error)}"
-                    )
+        except Exception:
+            pass
+        return ""
+
+    if _validate_video_file(video_path):
+        return video_path
+
+    logger.warning(f"downloaded video file is invalid: {video_path}")
+    try:
+        if os.path.exists(video_path):
+            os.remove(video_path)
+    except Exception as remove_error:
+        logger.warning(
+            f"failed to remove invalid video file: {video_path}, error: {str(remove_error)}"
+        )
     return ""
 
 

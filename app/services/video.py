@@ -795,10 +795,32 @@ def combine_videos(
     subclipped_items = []
     video_duration = 0
     for video_path in video_paths:
-        clip = _open_video_clip_quietly(video_path)
-        clip_duration = clip.duration
-        clip_w, clip_h = clip.size
-        close_clip(clip)
+        if not video_path:
+            continue
+
+        clip = None
+        try:
+            clip = _open_video_clip_quietly(video_path)
+            clip_duration = getattr(clip, "duration", 0) or 0
+            clip_w, clip_h = getattr(clip, "size", (0, 0))
+            if not clip_duration or clip_duration <= 0 or not clip_w or not clip_h:
+                logger.warning(
+                    f"skipping video material with invalid duration or size: {video_path}"
+                )
+                continue
+        except Exception as probe_error:
+            logger.warning(
+                f"skipping unreadable or corrupt video material {video_path}: {probe_error}"
+            )
+            try:
+                if os.path.exists(video_path):
+                    os.remove(video_path)
+            except Exception:
+                pass
+            continue
+        finally:
+            if clip is not None:
+                close_clip(clip)
         
         start_time = 0
 
@@ -933,7 +955,7 @@ def combine_videos(
             logger.error(f"failed to process clip: {str(e)}")
     
     # loop processed clips until the video duration covers the audio duration and the small safety margin.
-    if video_duration < required_video_duration:
+    if video_duration < required_video_duration and processed_clips:
         logger.warning(
             f"video duration ({video_duration:.2f}s) is shorter than required duration "
             f"({required_video_duration:.2f}s), looping clips to match audio length."

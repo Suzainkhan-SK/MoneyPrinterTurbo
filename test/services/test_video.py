@@ -1002,6 +1002,50 @@ class TestVideoService(unittest.TestCase):
         self.assertEqual(write_mock.call_count, 4)
         self.assertEqual(concat_mock.call_args.kwargs["max_duration"], 10.0)
 
+    def test_combine_videos_skips_unreadable_or_missing_clip_gracefully(self):
+        """When one video clip is missing or corrupted, combine_videos safely skips it and merges the valid clips."""
+        class _FakeAudioClip:
+            duration = 5.0
+            def close(self):
+                pass
+
+        class _FakeVideoClip:
+            def __init__(self, duration=5.0):
+                self.duration = duration
+                self.size = (1080, 1920)
+                self.w = 1080
+                self.h = 1920
+            def subclipped(self, start, end):
+                return _FakeVideoClip(end - start)
+            def close(self):
+                pass
+
+        def _open_video_side_effect(path):
+            if "bad" in path:
+                raise FileNotFoundError(f"'{path}' not found")
+            return _FakeVideoClip(5.0)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            combined_video_path = os.path.join(temp_dir, "combined.mp4")
+            with (
+                patch.object(vd, "AudioFileClip", return_value=_FakeAudioClip()),
+                patch.object(vd, "_open_video_clip_quietly", side_effect=_open_video_side_effect),
+                patch.object(vd, "_write_videofile_with_codec_fallback"),
+                patch.object(vd, "concat_video_clips_with_ffmpeg") as concat_mock,
+                patch.object(vd, "delete_files"),
+            ):
+                result = vd.combine_videos(
+                    combined_video_path=combined_video_path,
+                    video_paths=["bad_clip.mp4", "good_clip.mp4"],
+                    audio_file=os.path.join(temp_dir, "audio.mp3"),
+                    video_aspect=vd.VideoAspect.portrait,
+                    video_concat_mode=vd.VideoConcatMode.sequential,
+                    max_clip_duration=5,
+                )
+
+        self.assertEqual(result, combined_video_path)
+        self.assertTrue(concat_mock.called)
+
     def test_concat_video_clips_limits_output_to_audio_duration(self):
         """最终拼接时应裁到音频时长，避免安全余量带来明显静音尾巴。"""
 

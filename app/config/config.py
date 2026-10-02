@@ -833,9 +833,15 @@ def save_config(user_id: str | None = None):
     Includes all configuration sections and synchronizes cloud storage volume.
     """
     with _config_save_lock:
-        uid = user_id or utils.get_current_user_id() or getattr(_thread_local, "active_user_id", None) or _current_active_user_id
         target_file = config_file
-        if uid and uid in _user_registry:
+        if user_id and user_id in _user_registry:
+            target_file = _user_registry[user_id]["config_file"]
+            sections = _user_registry[user_id]["sections"]
+            config_to_save = dict(_user_registry[user_id]["cfg"])
+            for sec_name, sec_dict in sections.items():
+                config_to_save[sec_name] = dict(sec_dict)
+        elif not user_id and utils.get_current_user_id() and utils.get_current_user_id() in _user_registry and _user_registry[utils.get_current_user_id()]["config_file"] == config_file:
+            uid = utils.get_current_user_id()
             target_file = _user_registry[uid]["config_file"]
             sections = _user_registry[uid]["sections"]
             config_to_save = dict(_user_registry[uid]["cfg"])
