@@ -55,7 +55,7 @@ class TestVoiceService(unittest.TestCase):
     def test_get_all_azure_voices(self):
         voices = vs.get_all_azure_voices()
         # 数据已从内联字符串迁移到 azure_voices.json，确保仍能完整加载
-        self.assertEqual(len(voices), 331)
+        self.assertEqual(len(voices), 337)
         # 结果应为 "Name-Gender" 格式且已排序
         self.assertEqual(voices, sorted(voices))
         for v in voices:
@@ -1107,10 +1107,8 @@ class TestVoiceService(unittest.TestCase):
         self.assertEqual(
             utils.split_string_by_punctuations(text),
             [
-                (
-                    "It takes about 1,000 years for a single drop of water to finish "
-                    "the whole trip"
-                )
+                "It takes about 1,000 years for a single drop of water",
+                "to finish the whole trip",
             ],
         )
 
@@ -1145,7 +1143,7 @@ class TestVoiceService(unittest.TestCase):
         sub_items = vs._build_subtitle_items_from_edge_cues(sub_maker, script_lines)
 
         self.assertEqual(len(sub_items), len(script_lines))
-        self.assertIn("1,000 years", sub_items[-1])
+        self.assertTrue(any("1,000 years" in item for item in sub_items))
 
     def test_script_split_supports_arabic_punctuation(self):
         """

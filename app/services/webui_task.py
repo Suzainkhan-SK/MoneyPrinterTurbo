@@ -83,6 +83,10 @@ def _run_generation(
             _queued_task_ids.remove(task_id)
     _refresh_queued_positions()
 
+    task_user_id = params.user_id or utils.get_current_user_id() or "guest"
+    utils.set_current_user_id(task_user_id)
+    config.switch_user_config(task_user_id)
+
     sm.state.update_task(
         task_id,
         state=const.TASK_STATE_PROCESSING,

@@ -90,16 +90,19 @@ def root_dir():
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 
-_current_user_id = None
+_thread_local = threading.local()
+_global_user_id = None
 
 
 def set_current_user_id(user_id: str | None):
-    global _current_user_id
-    _current_user_id = str(user_id).strip() if user_id else None
+    global _global_user_id
+    clean_uid = str(user_id).strip() if user_id else None
+    _thread_local.user_id = clean_uid
+    _global_user_id = clean_uid
 
 
 def get_current_user_id() -> str | None:
-    return _current_user_id or os.environ.get("CURRENT_USER_ID") or None
+    return getattr(_thread_local, "user_id", None) or _global_user_id or os.environ.get("CURRENT_USER_ID") or None
 
 
 def storage_dir(sub_dir: str = "", create: bool = False):

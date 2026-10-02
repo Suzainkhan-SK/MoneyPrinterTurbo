@@ -115,6 +115,7 @@ class VideoParams(BaseModel):
     match_materials_to_script: bool = False
     auto_timeline_sync: bool = False
     video_count: int = Field(default=1, ge=1)
+    user_id: Optional[str] = None
 
     video_source: Optional[str] = "pexels"
     video_materials: Optional[List[MaterialInfo]] = (

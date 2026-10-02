@@ -166,8 +166,11 @@ def _verify_bangai_token(token_str: str) -> dict | None:
         padding = 4 - (len(body_b64) % 4)
         padded_b64 = body_b64 + ("=" * (padding % 4))
         payload = json.loads(base64.urlsafe_b64decode(padded_b64).decode("utf-8"))
-        if "exp" in payload and time.time() * 1000 > payload["exp"]:
-            return None
+        if "exp" in payload:
+            exp_val = payload["exp"]
+            now_ts = time.time()
+            if (exp_val > 1e11 and now_ts * 1000 > exp_val) or (exp_val <= 1e11 and now_ts > exp_val):
+                return None
         return payload
     except Exception as e:
         logger.warning(f"BangAI token verification error: {e}")
@@ -216,12 +219,16 @@ elif query_user_id:
 elif "bangai_auth_user" in st.session_state:
     auth_user = st.session_state["bangai_auth_user"]
 
-# Provide seamless access on direct visits (stable creator profile so settings persist across reloads)
+# Provide seamless access on direct visits (unique isolated session guest ID so settings persist across reloads without cross-user leakage)
 if not auth_user:
+    if "guest_user_id" not in st.session_state:
+        import uuid
+        st.session_state["guest_user_id"] = f"guest_{uuid.uuid4().hex[:10]}"
+    guest_uid = st.session_state["guest_user_id"]
     auth_user = {
-        "userId": "default_user",
-        "name": "Creator",
-        "email": "creator@bangai.com",
+        "userId": guest_uid,
+        "name": "Guest Creator",
+        "email": "",
     }
     st.session_state["bangai_auth_user"] = auth_user
 
@@ -231,7 +238,7 @@ utils.set_current_user_id(current_uid)
 config.switch_user_config(current_uid)
 
 # Persist user authentication credentials for background rendering workers
-if current_uid and current_uid != "default_user":
+if current_uid and not current_uid.startswith("guest_") and current_uid != "default_user":
     youtube_oauth.youtube_oauth_service.save_user_credentials(
         user_id=current_uid,
         token=query_token or st.session_state.get("bangai_token", ""),
@@ -2272,7 +2279,7 @@ def _open_task_path(task_path):
     webbrowser.open(f"file://{normalized_path}")
 
 
-def _open_task_video(video_file):
+def _open_task_video(video_file, task=None):
     tasks_root = os.path.abspath(utils.task_dir())
     normalized_file = os.path.abspath(video_file)
 
@@ -2285,20 +2292,17 @@ def _open_task_video(video_file):
         logger.warning(f"task video does not exist: {normalized_file}")
         return
 
-    if _is_headless_server():
-        # 无桌面环境时在任务面板内嵌播放器预览，代替调用系统播放器。
-        st.session_state["task_preview_video_file"] = normalized_file
-        return
+    task_id = os.path.basename(os.path.dirname(normalized_file))
+    subject = (task or {}).get("subject") or task_id
 
-    try:
-        if sys.platform == "darwin":
-            subprocess.Popen(["open", normalized_file])
-        elif sys.platform.startswith("win"):
-            os.startfile(normalized_file)  # type: ignore[attr-defined]
-        else:
-            subprocess.Popen(["xdg-open", normalized_file])
-    except Exception as e:
-        logger.error(f"failed to open task video: {normalized_file}, {e}")
+    # 统一在网页端触发置顶内嵌播放和全局弹窗预览，确保用户无需向下滚动查找
+    st.session_state["task_preview_video_file"] = normalized_file
+    st.session_state["active_video_preview_dialog"] = {
+        "video_file": normalized_file,
+        "task_id": task_id,
+        "subject": subject,
+        "task": task or {},
+    }
 
 
 def _delete_task(task_id, task_path, task_state=None):
@@ -3180,10 +3184,6 @@ def _dismiss_settings_dialog():
     """关闭设置弹窗，并确保落盘最新配置与云端卷同步。"""
     st.session_state["settings_dialog_open"] = False
     _save_runtime_config()
-    try:
-        config.save_config()
-    except Exception:
-        pass
     st.session_state["_synced_json2video_api_key_input"] = None
     st.session_state["_synced_settings_json2video_api_key_input"] = None
 
@@ -4666,12 +4666,21 @@ def _sync_json2video_api_key_input(widget_key="json2video_api_key_input"):
     同步 json2video 密钥在主页面和设置弹窗控件中的状态。
     确保无论用户在设置弹窗中输入保存，还是在主页面输入保存，两处输入框与底层配置均能即时双向同步，
     并且防止 Streamlit 在标签重连或 rerun 时因旧的空控件状态误清空用户已保存的密钥。
+    纯 BYOK 模式：不加载任何平台预置密钥或环境变量。
     """
     configured_key = str(config.json2video.get("api_key", "") or "").strip()
-    env_key = os.getenv("JSON2VIDEO_API_KEY", "").strip()
-    effective_key = configured_key or env_key
+    if configured_key and (configured_key.startswith("5RBJDXZf") or configured_key.startswith("qGkUqZ4r")):
+        configured_key = ""
+        config.json2video["api_key"] = ""
+        _save_runtime_config()
+
+    effective_key = configured_key
     had_widget_state = widget_key in st.session_state
     current_val = str(st.session_state.get(widget_key, "") or "").strip()
+    if current_val and (current_val.startswith("5RBJDXZf") or current_val.startswith("qGkUqZ4r")):
+        current_val = ""
+        st.session_state[widget_key] = ""
+
     last_synced = st.session_state.get(f"_synced_{widget_key}")
 
     # 1. 如果有效配置发生了变化（例如在设置面板中更新，或从文件加载）：
@@ -5815,15 +5824,11 @@ def _render_settings_dialog():
                 use_container_width=True,
             ):
                 _save_runtime_config()
-                try:
-                    config.save_config()
-                    st.session_state["_synced_json2video_api_key_input"] = None
-                    st.session_state["_synced_settings_json2video_api_key_input"] = None
-                    st.toast(tr("Settings saved successfully!"), icon="✅")
-                    st.success(tr("Settings saved successfully!"))
-                    st.rerun(scope="app")
-                except Exception as e:
-                    st.error(f"Error saving settings: {e}")
+                st.session_state["_synced_json2video_api_key_input"] = None
+                st.session_state["_synced_settings_json2video_api_key_input"] = None
+                st.toast(tr("Settings saved successfully!"), icon="✅")
+                st.success(tr("Settings saved successfully!"))
+                st.rerun(scope="app")
 
     _save_runtime_config()
 
@@ -10176,6 +10181,7 @@ def _render_generation_controls(
         try:
             st.toast(tr("Generating Video"))
             logger.info(tr("Start Generating Video"))
+            params.user_id = current_uid
             logger.info(utils.to_json(params))
             webui_task.submit_generation(
                 task_id=task_id,

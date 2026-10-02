@@ -11,6 +11,7 @@ import toml
 from loguru import logger
 
 from app import __version__
+from app.utils import utils
 
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 config_file = f"{root_dir}/config.toml"
@@ -39,7 +40,9 @@ _MISSING = object()
 _DELETE = object()
 _UTF8_BOM = "\ufeff"
 _current_active_user_id = None
-PLATFORM_JSON2VIDEO_API_KEY = "5RBJDXZfAjfT1CSJ6F18DlZ7hvACfw7hfCtEdC1p"
+_thread_local = threading.local()
+_user_registry = {}
+_user_registry_lock = threading.RLock()
 
 
 _volume_commit_lock = threading.Lock()
@@ -78,10 +81,6 @@ class _SynchronizedConfig(dict):
     """保持 dict 使用方式不变，同时让运行期配置写操作服从同一把锁。"""
 
     def __setitem__(self, key, value):
-        # Streamlit 每次整页 rerun 都会把当前控件值重新写回配置。视频任务持有
-        # runtime_config_lock 时，如果值没有变化，这次写入没有任何副作用，也
-        # 不应让刷新后的页面卡在表单中途。真正改变配置的写入仍进入下方锁，
-        # 因而不能在正在生成的视频中途切换 Provider、密钥或其它全局设置。
         current = super().get(key, _MISSING)
         if current is not _MISSING and current == value:
             return
@@ -99,8 +98,6 @@ class _SynchronizedConfig(dict):
             super().clear()
 
     def pop(self, key, default=_MISSING):
-        # ``pop(key, default)`` 在 key 不存在时同样不会改变配置。WebUI 使用
-        # 这种写法表达“采用默认策略”，刷新时必须允许它直接完成。
         if key not in self:
             if default is _MISSING:
                 raise KeyError(key)
@@ -111,8 +108,6 @@ class _SynchronizedConfig(dict):
             return super().pop(key, default)
 
     def setdefault(self, key, default=None):
-        # 与 __setitem__ 相同，已存在 key 的 setdefault 是只读操作。提前返回
-        # 可以让只读取默认配置的页面刷新不受长任务配置锁影响。
         current = super().get(key, _MISSING)
         if current is not _MISSING:
             return current
@@ -131,9 +126,135 @@ class _SynchronizedConfig(dict):
             super().update(changes)
 
 
-def _pending_update_key(config_section, key):
-    """为进程内固定配置分区生成待更新键。"""
-    return id(config_section), key
+class _MultiTenantConfigSection(dict):
+    """
+    Thread-aware multi-tenant configuration section proxy.
+    Automatically resolves accesses to the calling thread's isolated user configuration.
+    Falls back cleanly to the process-wide default configuration.
+    """
+
+    def __init__(self, section_name: str, fallback_data: dict | None = None):
+        super().__init__(fallback_data or {})
+        self._section_name = section_name
+
+    def _active_dict(self) -> dict:
+        uid = getattr(_thread_local, "active_user_id", None) or _current_active_user_id
+        if uid and uid in _user_registry:
+            sections = _user_registry[uid].get("sections", {})
+            if self._section_name in sections:
+                return sections[self._section_name]
+        return self
+
+    def __getitem__(self, key):
+        target = self._active_dict()
+        if target is self:
+            return super().__getitem__(key)
+        return target[key]
+
+    def __setitem__(self, key, value):
+        current = self.get(key, _MISSING)
+        if current is not _MISSING and current == value:
+            return
+        with _config_save_lock:
+            super().__setitem__(key, value)
+            target = self._active_dict()
+            if target is not self:
+                target[key] = value
+
+    def __delitem__(self, key):
+        with _config_save_lock:
+            if key in self:
+                super().__delitem__(key)
+            target = self._active_dict()
+            if target is not self and key in target:
+                del target[key]
+
+    def __contains__(self, key):
+        target = self._active_dict()
+        if target is self:
+            return super().__contains__(key)
+        return key in target
+
+    def get(self, key, default=None):
+        target = self._active_dict()
+        if target is self:
+            return super().get(key, default)
+        return target.get(key, default)
+
+    def setdefault(self, key, default=None):
+        current = self.get(key, _MISSING)
+        if current is not _MISSING:
+            return current
+        with _config_save_lock:
+            super().setdefault(key, default)
+            target = self._active_dict()
+            if target is not self:
+                return target.setdefault(key, default)
+            return super().setdefault(key, default)
+
+    def pop(self, key, *args):
+        if key not in self:
+            if not args:
+                raise KeyError(key)
+            return args[0]
+        with _config_save_lock:
+            super().pop(key, *args)
+            target = self._active_dict()
+            if target is not self:
+                return target.pop(key, *args)
+            return super().pop(key, *args)
+
+    def update(self, *args, **kwargs):
+        changes = dict(*args, **kwargs)
+        if all(
+            (current := self.get(key, _MISSING)) is not _MISSING
+            and current == value
+            for key, value in changes.items()
+        ):
+            return
+        with _config_save_lock:
+            super().update(changes)
+            target = self._active_dict()
+            if target is not self:
+                target.update(changes)
+
+    def clear(self):
+        with _config_save_lock:
+            super().clear()
+            target = self._active_dict()
+            if target is not self:
+                target.clear()
+
+    def keys(self):
+        target = self._active_dict()
+        return target.keys() if target is not self else super().keys()
+
+    def values(self):
+        target = self._active_dict()
+        return target.values() if target is not self else super().values()
+
+    def items(self):
+        target = self._active_dict()
+        return target.items() if target is not self else super().items()
+
+    def copy(self):
+        target = self._active_dict()
+        return dict(target) if target is not self else super().copy()
+
+    def __iter__(self):
+        target = self._active_dict()
+        return iter(target) if target is not self else super().__iter__()
+
+    def __len__(self):
+        target = self._active_dict()
+        return len(target) if target is not self else super().__len__()
+
+
+def _pending_update_key(config_section, key, user_id=None):
+    """为进程内固定配置分区与租户生成待更新键。"""
+    if user_id is None:
+        user_id = utils.get_current_user_id()
+    return user_id, id(config_section), key
 
 
 def update_config_nonblocking(config_section, key, value):
@@ -150,8 +271,10 @@ def update_config_nonblocking(config_section, key, value):
     # 所有更新都先进入同一队列，再尝试获取配置锁。这样多个页面同时修改同一
     # 配置项时，写入队列的先后顺序就是最终顺序，不会出现较早线程在获取锁后
     # 把较新线程已经排队的值误删掉。
+    current_uid = utils.get_current_user_id()
     with _pending_config_lock:
-        _pending_config_updates[_pending_update_key(config_section, key)] = (
+        _pending_config_updates[_pending_update_key(config_section, key, current_uid)] = (
+            current_uid,
             config_section,
             key,
             copy.deepcopy(value),
@@ -179,8 +302,10 @@ def delete_config_nonblocking(config_section, key):
     “使用默认值”需要真正移除配置项，而不是写入空字符串。视频任务占用配置
     锁时，删除意图会覆盖同一配置项之前排队的更新，并在任务结束后执行。
     """
+    current_uid = utils.get_current_user_id()
     with _pending_config_lock:
-        _pending_config_updates[_pending_update_key(config_section, key)] = (
+        _pending_config_updates[_pending_update_key(config_section, key, current_uid)] = (
+            current_uid,
             config_section,
             key,
             _DELETE,
@@ -203,14 +328,25 @@ def _apply_pending_config_updates_locked():
     with _pending_config_lock:
         updates = list(_pending_config_updates.values())
         _pending_config_updates.clear()
-        # 应用配置时继续持有待更新锁。读取“当前值 + 待更新值”快照的线程由此
-        # 只能看到应用前或应用后的完整状态，不会读到只更新了一半的配置集合。
-        for config_section, key, value in updates:
+
+    affected_uids = set()
+    for entry in updates:
+        if len(entry) == 4:
+            uid, config_section, key, value = entry
+        else:
+            config_section, key, value = entry
+            uid = utils.get_current_user_id()
+        affected_uids.add(uid)
+        orig_uid = utils.get_current_user_id()
+        try:
+            utils.set_current_user_id(uid)
             if value is _DELETE:
                 config_section.pop(key, None)
             else:
                 config_section[key] = value
-    return bool(updates)
+        finally:
+            utils.set_current_user_id(orig_uid)
+    return affected_uids
 
 
 def snapshot_config_with_pending(config_section):
@@ -221,16 +357,24 @@ def snapshot_config_with_pending(config_section):
     使用这个快照后，界面中刚选择的 Provider、模型和密钥会参与新请求，同时
     不会改变正在执行的视频任务。
     """
+    uid = utils.get_current_user_id()
     with _pending_config_lock:
         snapshot = dict(config_section)
         section_id = id(config_section)
-        for (pending_section_id, key), (_, _, value) in _pending_config_updates.items():
-            if pending_section_id != section_id:
+        for pending_key, entry in _pending_config_updates.items():
+            if len(entry) == 4:
+                entry_uid, p_section, k, value = entry
+                p_section_id = id(p_section)
+            else:
+                entry_uid = uid
+                p_section, k, value = entry
+                p_section_id = id(p_section)
+            if entry_uid != uid or p_section_id != section_id:
                 continue
             if value is _DELETE:
-                snapshot.pop(key, None)
+                snapshot.pop(k, None)
             else:
-                snapshot[key] = copy.deepcopy(value)
+                snapshot[k] = copy.deepcopy(value)
     return snapshot
 
 
@@ -238,16 +382,28 @@ def _flush_pending_config_locked(*, suppress_save_errors):
     """在持有配置写锁时应用并保存当前所有待处理配置。"""
     global _pending_config_save_requested
 
-    updates_applied = _apply_pending_config_updates_locked()
+    affected_uids = _apply_pending_config_updates_locked()
     with _pending_config_lock:
         save_requested = _pending_config_save_requested
         _pending_config_save_requested = False
 
-    if not updates_applied and not save_requested:
+    if not affected_uids and not save_requested:
         return True
 
+    all_uids = set(affected_uids)
+    curr_uid = utils.get_current_user_id()
+    if save_requested:
+        all_uids.add(curr_uid)
+
     try:
-        save_config()
+        if not all_uids or (len(all_uids) == 1 and curr_uid in all_uids):
+            save_config()
+        else:
+            for uid in all_uids:
+                if uid == curr_uid:
+                    save_config()
+                else:
+                    save_config(uid)
         return True
     except Exception as exc:
         # 内存中的配置已经成功应用，保存失败时只保留待保存标记。视频任务不应
@@ -506,7 +662,7 @@ def _load_toml_config(config_path: str):
 
 
 def _sanitize_config_dict(cfg: dict) -> dict:
-    """Ensure all API keys, secrets, tokens, and personal prompts are completely empty (except platform pre-applied json2video key)."""
+    """Ensure all API keys, secrets, tokens, and personal prompts are completely empty (strict Bring-Your-Own-Key system)."""
     app_sec = cfg.setdefault("app", {})
     # Strip LLM and external service keys
     for k in [
@@ -530,20 +686,29 @@ def _sanitize_config_dict(cfg: dict) -> dict:
     app_sec["openai_image_api_keys"] = []
     app_sec["twelvelabs_api_keys"] = []
 
-    # Strip voice / TTS service keys (BYOK services)
+    # Strip voice / TTS service keys (BYOK services - no pre-applied keys)
     for sec_name in [
         "azure", "siliconflow", "minimax_tts", "elevenlabs",
-        "chatterbox", "kokoro", "fish_audio", "voxcpm"
+        "chatterbox", "kokoro", "fish_audio", "voxcpm", "json2video"
     ]:
         sec = cfg.setdefault(sec_name, {})
         for key_field in ["api_key", "speech_key", "cloudconvert_api_key"]:
             if key_field in sec:
                 sec[key_field] = ""
 
-    # json2video is the platform-provided ElevenLabs Premium TTS service - guarantee pre-applied key
+    # Strip any known legacy platform or test keys that might linger
+    legacy_keys = {
+        "5RBJDXZfAjfT1CSJ6F18DlZ7hvACfw7hfCtEdC1p",
+        "qGkUqZ4rFf14aQc2qGcl12b8z",
+        "AIzaSyC_ozuedo6ueobvhbHDA6OFYa-d4uKDAKo",
+        "wnzipdxV7TGWJQwatBQeOzMRL7LnYHbAJS09rRxwMpvuv89OSrs8B6Um"
+    }
     j2v = cfg.setdefault("json2video", {})
-    if not j2v.get("api_key") or j2v.get("api_key") == "qGkUqZ4rFf14aQc2qGcl12b8z":
-        j2v["api_key"] = os.getenv("JSON2VIDEO_API_KEY", PLATFORM_JSON2VIDEO_API_KEY)
+    if j2v.get("api_key") in legacy_keys:
+        j2v["api_key"] = ""
+
+    yt = cfg.setdefault("youtube_oauth", {})
+    yt["selected_channel_id"] = ""
 
     # Strip personal user prompts so new users get clean input boxes
     ui_sec = cfg.setdefault("ui", {})
@@ -569,16 +734,7 @@ def load_config():
     logger.info(f"load config from file: {config_file}")
 
     loaded = _load_toml_config(config_file)
-
-    # Sanitize root template if any legacy test keys leaked
-    legacy_keys = ("AIzaSyC_ozuedo6ueobvhbHDA6OFYa-d4uKDAKo", "wnzipdxV7TGWJQwatBQeOzMRL7LnYHbAJS09rRxwMpvuv89OSrs8B6Um")
-    if any(legacy in str(loaded.get("app", {})) for legacy in legacy_keys):
-        _sanitize_config_dict(loaded)
-        try:
-            with open(config_file, "w", encoding="utf-8") as f:
-                toml.dump(loaded, f)
-        except Exception:
-            pass
+    _sanitize_config_dict(loaded)
     return loaded
 
 
@@ -588,185 +744,184 @@ def switch_user_config(user_id: str):
     if not user_id:
         return
     clean_uid = str(user_id).strip()
+    _thread_local.active_user_id = clean_uid
+    _current_active_user_id = clean_uid
+
     user_storage = os.path.join(root_dir, "storage", "users", clean_uid)
     os.makedirs(user_storage, exist_ok=True)
     user_config = os.path.join(user_storage, "config.toml")
 
-    # If already switched to this user and the config file is active, DO NOT reload from disk and wipe memory!
-    if clean_uid == _current_active_user_id and config_file == user_config and os.path.isfile(user_config):
-        return
-    _current_active_user_id = clean_uid
+    with _user_registry_lock:
+        if clean_uid in _user_registry:
+            config_file = _user_registry[clean_uid]["config_file"]
+            return
 
-    # If user doesn't have a config yet, create a clean sanitized config
-    if not os.path.isfile(user_config):
-        base_template = os.path.join(root_dir, "storage", "config.toml")
-        if not os.path.isfile(base_template):
-            base_template = os.path.join(root_dir, "config.toml")
-        try:
-            template_cfg = _load_toml_config(base_template) if os.path.isfile(base_template) else {}
-            _sanitize_config_dict(template_cfg)
-            with open(user_config, "w", encoding="utf-8") as f:
-                toml.dump(template_cfg, f)
-        except Exception as e:
-            logger.warning(f"failed to initialize clean user config: {e}")
+        # If user doesn't have a config yet, create a clean sanitized config
+        if not os.path.isfile(user_config):
+            base_template = os.path.join(root_dir, "storage", "config.toml")
+            if not os.path.isfile(base_template):
+                base_template = os.path.join(root_dir, "config.toml")
+            try:
+                template_cfg = _load_toml_config(base_template) if os.path.isfile(base_template) else {}
+                _sanitize_config_dict(template_cfg)
+                with open(user_config, "w", encoding="utf-8") as f:
+                    toml.dump(template_cfg, f)
+            except Exception as e:
+                logger.warning(f"failed to initialize clean user config: {e}")
 
-    if os.path.isfile(user_config):
-        config_file = user_config
-        try:
-            new_cfg = _load_toml_config(config_file)
+        if os.path.isfile(user_config):
+            config_file = user_config
+            try:
+                new_cfg = _load_toml_config(config_file)
 
-            # Security safeguard: Check if this user config still has legacy leaked test keys
-            legacy_keys = ("AIzaSyC_ozuedo6ueobvhbHDA6OFYa-d4uKDAKo", "wnzipdxV7TGWJQwatBQeOzMRL7LnYHbAJS09rRxwMpvuv89OSrs8B6Um")
-            if any(legacy in str(new_cfg.get("app", {})) for legacy in legacy_keys):
-                _sanitize_config_dict(new_cfg)
-                try:
-                    with open(user_config, "w", encoding="utf-8") as f:
-                        toml.dump(new_cfg, f)
-                except Exception:
-                    pass
+                # Ensure no legacy platform keys linger in user config
+                legacy_keys = {
+                    "5RBJDXZfAjfT1CSJ6F18DlZ7hvACfw7hfCtEdC1p",
+                    "qGkUqZ4rFf14aQc2qGcl12b8z",
+                    "AIzaSyC_ozuedo6ueobvhbHDA6OFYa-d4uKDAKo",
+                    "wnzipdxV7TGWJQwatBQeOzMRL7LnYHbAJS09rRxwMpvuv89OSrs8B6Um"
+                }
+                j2v = new_cfg.setdefault("json2video", {})
+                if j2v.get("api_key") in legacy_keys:
+                    j2v["api_key"] = ""
+                    try:
+                        with open(user_config, "w", encoding="utf-8") as f:
+                            toml.dump(new_cfg, f)
+                    except Exception:
+                        pass
 
-            _cfg.clear()
-            _cfg.update(new_cfg)
-            app.clear()
-            app.update(new_cfg.get("app", {}))
-            azure.clear()
-            azure.update(new_cfg.get("azure", {}))
-            siliconflow.clear()
-            siliconflow.update(new_cfg.get("siliconflow", {}))
-            minimax_tts.clear()
-            minimax_tts.update(new_cfg.get("minimax_tts", {}))
-            elevenlabs.clear()
-            elevenlabs.update(new_cfg.get("elevenlabs", {}))
-            chatterbox.clear()
-            chatterbox.update(new_cfg.get("chatterbox", {}))
-            kokoro.clear()
-            kokoro.update(new_cfg.get("kokoro", {}))
-            fish_audio.clear()
-            fish_audio.update(new_cfg.get("fish_audio", {}))
-            voxcpm.clear()
-            voxcpm.update(new_cfg.get("voxcpm", {}))
-            json2video.clear()
-            json2video.update(new_cfg.get("json2video", {}))
-            if not json2video.get("api_key") or json2video.get("api_key") == "qGkUqZ4rFf14aQc2qGcl12b8z":
-                json2video["api_key"] = os.getenv("JSON2VIDEO_API_KEY", PLATFORM_JSON2VIDEO_API_KEY)
-                _cfg.setdefault("json2video", {})["api_key"] = json2video["api_key"]
-            ui.clear()
-            ui.update(new_cfg.get("ui", {"hide_log": False}))
-            youtube_oauth.clear()
-            youtube_oauth.update(new_cfg.get("youtube_oauth", {
-                "enabled": True,
-                "upload_mode": "manual",
-                "selected_channel_id": "",
-                "default_privacy_status": "public",
-                "made_for_kids": False,
-            }))
-            logger.info(f"switched to isolated user config: {config_file}")
-        except Exception as e:
-            logger.warning(f"failed to load user config {config_file}: {e}")
+                user_sections = {
+                    "app": _SynchronizedConfig(new_cfg.get("app", {})),
+                    "azure": _SynchronizedConfig(new_cfg.get("azure", {})),
+                    "siliconflow": _SynchronizedConfig(new_cfg.get("siliconflow", {})),
+                    "minimax_tts": _SynchronizedConfig(new_cfg.get("minimax_tts", {})),
+                    "elevenlabs": _SynchronizedConfig(new_cfg.get("elevenlabs", {})),
+                    "chatterbox": _SynchronizedConfig(new_cfg.get("chatterbox", {})),
+                    "kokoro": _SynchronizedConfig(new_cfg.get("kokoro", {})),
+                    "fish_audio": _SynchronizedConfig(new_cfg.get("fish_audio", {})),
+                    "voxcpm": _SynchronizedConfig(new_cfg.get("voxcpm", {})),
+                    "json2video": _SynchronizedConfig(new_cfg.get("json2video", {})),
+                    "ui": _SynchronizedConfig(new_cfg.get("ui", {"hide_log": False})),
+                    "youtube_oauth": _SynchronizedConfig(new_cfg.get("youtube_oauth", {
+                        "enabled": True,
+                        "upload_mode": "manual",
+                        "selected_channel_id": "",
+                        "default_privacy_status": "public",
+                        "made_for_kids": False,
+                    })),
+                }
+
+                _user_registry[clean_uid] = {
+                    "config_file": user_config,
+                    "cfg": new_cfg,
+                    "sections": user_sections,
+                }
+                logger.info(f"switched to isolated user config for user '{clean_uid}': {config_file}")
+            except Exception as e:
+                logger.warning(f"failed to load user config {config_file}: {e}")
 
 
 def get_active_user_id() -> str:
-    """Return the currently active user ID."""
-    return _current_active_user_id or ""
+    """Return the currently active user ID for the calling thread."""
+    return getattr(_thread_local, "active_user_id", None) or _current_active_user_id or ""
 
 
-def save_config():
+def save_config(user_id: str | None = None):
     """
-    原子保存运行时配置。
-
-    Streamlit 的不同会话可能在相近时间触发配置保存。直接覆盖 config.toml 时，
-    另一个线程可能读取到只写了一部分的 TOML 内容。这里使用进程内可重入锁串行化
-    保存，并先写入同目录临时文件，再通过 os.replace 原子替换目标文件。
-
-    Docker Desktop 单文件 bind mount 会把 config.toml 本身作为挂载点，
-    Linux 内核不允许通过 rename/replace 替换挂载点，因此会返回 EBUSY。
-    该场景下只能在锁内原地覆盖文件；其它异常仍然抛出，避免掩盖权限、磁盘
-    或路径错误。
-
-    这仍然保留项目现有的单用户全局配置语义，不额外引入复杂的多用户配置系统；
-    主要用于避免多标签页或快速 rerun 时损坏配置文件。
+    Atomically saves the runtime configuration for the active user (or specified user).
+    Includes all configuration sections and synchronizes cloud storage volume.
     """
     with _config_save_lock:
-        config_to_save = dict(_cfg)
-        config_to_save["app"] = dict(app)
-        config_to_save["azure"] = dict(azure)
-        config_to_save["siliconflow"] = dict(siliconflow)
-        config_to_save["minimax_tts"] = dict(minimax_tts)
-        config_to_save["elevenlabs"] = dict(elevenlabs)
-        config_to_save["chatterbox"] = dict(chatterbox)
-        config_to_save["kokoro"] = dict(kokoro)
-        config_to_save["fish_audio"] = dict(fish_audio)
-        config_to_save["voxcpm"] = dict(voxcpm)
-        config_to_save["json2video"] = dict(json2video)
-        config_to_save["ui"] = dict(ui)
+        uid = user_id or getattr(_thread_local, "active_user_id", None) or _current_active_user_id
+        target_file = config_file
+        if uid and uid in _user_registry:
+            target_file = _user_registry[uid]["config_file"]
+            sections = _user_registry[uid]["sections"]
+            config_to_save = dict(_user_registry[uid]["cfg"])
+            for sec_name, sec_dict in sections.items():
+                config_to_save[sec_name] = dict(sec_dict)
+        else:
+            config_to_save = dict(_cfg)
+            config_to_save["app"] = dict(app)
+            config_to_save["azure"] = dict(azure)
+            config_to_save["siliconflow"] = dict(siliconflow)
+            config_to_save["minimax_tts"] = dict(minimax_tts)
+            config_to_save["elevenlabs"] = dict(elevenlabs)
+            config_to_save["chatterbox"] = dict(chatterbox)
+            config_to_save["kokoro"] = dict(kokoro)
+            config_to_save["fish_audio"] = dict(fish_audio)
+            config_to_save["voxcpm"] = dict(voxcpm)
+            config_to_save["json2video"] = dict(json2video)
+            config_to_save["ui"] = dict(ui)
+            config_to_save["youtube_oauth"] = dict(youtube_oauth)
+
         serialized_config = toml.dumps(config_to_save)
 
-        # WebUI 完整 rerun 结束时会调用保存。内容没有变化时直接返回，避免每次
-        # 点击普通控件都产生一次磁盘写入和 fsync。
         try:
-            with open(config_file, mode="r", encoding="utf-8") as f:
+            with open(target_file, mode="r", encoding="utf-8") as f:
                 if f.read() == serialized_config:
-                    _cfg.clear()
-                    _cfg.update(config_to_save)
                     return
         except (OSError, UnicodeError):
             pass
 
         temp_path = ""
         try:
+            os.makedirs(os.path.dirname(target_file), exist_ok=True)
             fd, temp_path = tempfile.mkstemp(
                 prefix=".config-",
                 suffix=".toml.tmp",
-                dir=os.path.dirname(config_file),
+                dir=os.path.dirname(target_file),
             )
             with os.fdopen(fd, mode="w", encoding="utf-8") as f:
                 f.write(serialized_config)
                 f.flush()
                 os.fsync(f.fileno())
             try:
-                os.replace(temp_path, config_file)
+                os.replace(temp_path, target_file)
             except OSError as exc:
                 if exc.errno != errno.EBUSY:
                     raise
-
                 logger.warning(
                     "atomic config replacement is unavailable for the mounted "
-                    f"file, fallback to in-place write: {config_file}"
+                    f"file, fallback to in-place write: {target_file}"
                 )
-                with open(config_file, mode="w", encoding="utf-8") as f:
+                with open(target_file, mode="w", encoding="utf-8") as f:
                     f.write(serialized_config)
                     f.flush()
                     os.fsync(f.fileno())
-            _cfg.clear()
-            _cfg.update(config_to_save)
             sync_cloud_volume()
         finally:
             if temp_path and os.path.exists(temp_path):
-                os.remove(temp_path)
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
 
 
 _cfg = load_config()
-app = _SynchronizedConfig(_cfg.get("app", {}))
+app = _MultiTenantConfigSection("app", _cfg.get("app", {}))
 whisper = _cfg.get("whisper", {})
 proxy = _cfg.get("proxy", {})
-azure = _SynchronizedConfig(_cfg.get("azure", {}))
-siliconflow = _SynchronizedConfig(_cfg.get("siliconflow", {}))
-minimax_tts = _SynchronizedConfig(_cfg.get("minimax_tts", {}))
-elevenlabs = _SynchronizedConfig(_cfg.get("elevenlabs", {}))
-chatterbox = _SynchronizedConfig(_cfg.get("chatterbox", {}))
-kokoro = _SynchronizedConfig(_cfg.get("kokoro", {}))
-fish_audio = _SynchronizedConfig(_cfg.get("fish_audio", {}))
-voxcpm = _SynchronizedConfig(_cfg.get("voxcpm", {}))
-json2video = _SynchronizedConfig(_cfg.get("json2video", {}))
-ui = _SynchronizedConfig(
+azure = _MultiTenantConfigSection("azure", _cfg.get("azure", {}))
+siliconflow = _MultiTenantConfigSection("siliconflow", _cfg.get("siliconflow", {}))
+minimax_tts = _MultiTenantConfigSection("minimax_tts", _cfg.get("minimax_tts", {}))
+elevenlabs = _MultiTenantConfigSection("elevenlabs", _cfg.get("elevenlabs", {}))
+chatterbox = _MultiTenantConfigSection("chatterbox", _cfg.get("chatterbox", {}))
+kokoro = _MultiTenantConfigSection("kokoro", _cfg.get("kokoro", {}))
+fish_audio = _MultiTenantConfigSection("fish_audio", _cfg.get("fish_audio", {}))
+voxcpm = _MultiTenantConfigSection("voxcpm", _cfg.get("voxcpm", {}))
+json2video = _MultiTenantConfigSection("json2video", _cfg.get("json2video", {}))
+ui = _MultiTenantConfigSection(
+    "ui",
     _cfg.get(
         "ui",
         {
             "hide_log": False,
         },
-    )
+    ),
 )
-youtube_oauth = _SynchronizedConfig(
+youtube_oauth = _MultiTenantConfigSection(
+    "youtube_oauth",
     _cfg.get(
         "youtube_oauth",
         {
@@ -776,7 +931,7 @@ youtube_oauth = _SynchronizedConfig(
             "default_privacy_status": "public",
             "made_for_kids": False,
         },
-    )
+    ),
 )
 
 hostname = socket.gethostname()

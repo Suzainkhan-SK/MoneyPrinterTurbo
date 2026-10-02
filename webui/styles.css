@@ -541,17 +541,22 @@ div[data-testid="stPopoverBody"] div[data-testid="stVerticalBlock"] {
 
 /* 任务管理列表卡片式响应布局 */
 div[class*="st-key-task_row_"] {
-    margin-bottom: 0.35rem !important;
-    border-radius: 8px !important;
-    transition: background 0.15s ease, border-color 0.15s ease !important;
+    margin-bottom: 0.5rem !important;
+    border-radius: 10px !important;
+    border: 1px solid rgba(128, 128, 128, 0.2) !important;
+    background: rgba(128, 128, 128, 0.04) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+    transition: all 0.2s ease !important;
 }
 
 div[class*="st-key-task_row_"]:hover {
-    border-color: rgba(255, 120, 60, 0.45) !important;
+    border-color: rgba(255, 120, 60, 0.55) !important;
+    background: rgba(255, 120, 60, 0.04) !important;
+    box-shadow: 0 4px 14px rgba(255, 120, 60, 0.14) !important;
 }
 
 div[class*="st-key-task_row_"] div[data-testid="stVerticalBlockBorderWrapper"] {
-    padding: 0.4rem 0.65rem !important;
+    padding: 0.55rem 0.8rem !important;
 }
 
 div[class*="st-key-task_row_"] div[data-testid="stElementContainer"],
@@ -567,6 +572,7 @@ div[class*="st-key-task_row_"] div[data-testid="stMarkdown"] {
 div[class*="st-key-task_row_"] div[data-testid="stMarkdownContainer"] {
     display: block !important;
     margin-bottom: 0 !important;
+    width: 100% !important;
 }
 
 div[class*="st-key-task_row_"] p {
@@ -577,15 +583,17 @@ div[class*="st-key-task_row_"] p {
 div[class*="st-key-task_row_"] button,
 div[class*="st-key-task_row_"] a[data-testid="stLinkButton"],
 div[class*="st-key-task_row_"] [data-testid="stDownloadButton"] button {
-    min-height: 2.05rem !important;
-    height: 2.05rem !important;
-    padding: 0.15rem 0.5rem !important;
+    min-height: 2.15rem !important;
+    height: 2.15rem !important;
+    padding: 0.2rem 0.6rem !important;
     font-size: 0.82rem !important;
+    font-weight: 500 !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    border-radius: 6px !important;
+    border-radius: 7px !important;
     white-space: nowrap !important;
+    transition: all 0.15s ease !important;
 }
 
 div[class*="st-key-task_row_"] button p,
@@ -594,6 +602,49 @@ div[class*="st-key-task_row_"] [data-testid="stDownloadButton"] button p {
     font-size: 0.82rem !important;
     margin: 0 !important;
     line-height: 1 !important;
+}
+
+/* 状态微章样式 (Status Badges) */
+.task-badge {
+    display: inline-flex !important;
+    align-items: center !important;
+    padding: 0.18rem 0.6rem !important;
+    border-radius: 9999px !important;
+    font-size: 0.73rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.02em !important;
+    line-height: 1.2 !important;
+    white-space: nowrap !important;
+}
+
+.badge-completed {
+    background: rgba(34, 197, 94, 0.16) !important;
+    color: #16a34a !important;
+    border: 1px solid rgba(34, 197, 94, 0.38) !important;
+}
+
+.badge-processing {
+    background: rgba(59, 130, 246, 0.16) !important;
+    color: #2563eb !important;
+    border: 1px solid rgba(59, 130, 246, 0.38) !important;
+    animation: task-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite !important;
+}
+
+.badge-failed {
+    background: rgba(239, 68, 68, 0.16) !important;
+    color: #dc2626 !important;
+    border: 1px solid rgba(239, 68, 68, 0.38) !important;
+}
+
+.badge-history {
+    background: rgba(148, 163, 184, 0.18) !important;
+    color: #64748b !important;
+    border: 1px solid rgba(148, 163, 184, 0.35) !important;
+}
+
+@keyframes task-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
 }
 
 

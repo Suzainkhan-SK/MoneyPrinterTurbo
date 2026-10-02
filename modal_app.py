@@ -8,8 +8,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-PLATFORM_JSON2VIDEO_KEY = "5RBJDXZfAjfT1CSJ6F18DlZ7hvACfw7hfCtEdC1p"
-os.environ["JSON2VIDEO_API_KEY"] = PLATFORM_JSON2VIDEO_KEY
+
 
 # 1. Persistent cloud volume for generated tasks, audio, and videos (50 GB Free)
 volume = modal.Volume.from_name("bangai-storage", create_if_missing=True)
@@ -71,9 +70,14 @@ def ui():
     try:
         volume.reload()
         # Sanitize persistent cloud storage base template:
-        # BYOK keys (Gemini, Pexels, OpenAI, etc.) must remain empty so new users start clean without anyone else's keys.
-        # json2video is a platform-provided service, so it is pre-applied by default.
+        # All BYOK keys (Gemini, Pexels, OpenAI, json2video, etc.) must remain clean/empty so new users start with their own keys.
         storage_cfg = "/root/storage/config.toml"
+        legacy_keys = {
+            "5RBJDXZfAjfT1CSJ6F18DlZ7hvACfw7hfCtEdC1p",
+            "qGkUqZ4rFf14aQc2qGcl12b8z",
+            "AIzaSyC_ozuedo6ueobvhbHDA6OFYa-d4uKDAKo",
+            "wnzipdxV7TGWJQwatBQeOzMRL7LnYHbAJS09rRxwMpvuv89OSrs8B6Um"
+        }
         if os.path.exists(storage_cfg):
             with open(storage_cfg, "r", encoding="utf-8") as f:
                 c = toml.load(f)
@@ -83,14 +87,14 @@ def ui():
             for k in ["openai_api_key", "anthropic_api_key", "azure_api_key", "deepseek_api_key"]:
                 if k in app_sec:
                     app_sec[k] = ""
-            # Ensure json2video has the pre-applied platform key
+            # json2video is strictly BYOK
             j2v_sec = c.setdefault("json2video", {})
-            if not j2v_sec.get("api_key") or j2v_sec.get("api_key") == "qGkUqZ4rFf14aQc2qGcl12b8z":
-                j2v_sec["api_key"] = PLATFORM_JSON2VIDEO_KEY
+            if j2v_sec.get("api_key") in legacy_keys:
+                j2v_sec["api_key"] = ""
             with open(storage_cfg, "w", encoding="utf-8") as f:
                 toml.dump(c, f)
 
-        # Also ensure existing user configs have json2video key pre-applied if missing or empty
+        # Also sanitize existing user configs: clear any legacy platform keys
         import glob
         for user_cfg in glob.glob("/root/storage/users/*/config.toml"):
             try:
@@ -98,8 +102,8 @@ def ui():
                     uc = toml.load(f)
                 dirty = False
                 j2v_sec = uc.setdefault("json2video", {})
-                if not j2v_sec.get("api_key") or j2v_sec.get("api_key") == "qGkUqZ4rFf14aQc2qGcl12b8z":
-                    j2v_sec["api_key"] = PLATFORM_JSON2VIDEO_KEY
+                if j2v_sec.get("api_key") in legacy_keys:
+                    j2v_sec["api_key"] = ""
                     dirty = True
                 if dirty:
                     with open(user_cfg, "w", encoding="utf-8") as f:
@@ -125,7 +129,6 @@ def ui():
     env = {
         **os.environ,
         "PYTHONPATH": "/root",
-        "JSON2VIDEO_API_KEY": PLATFORM_JSON2VIDEO_KEY,
     }
     subprocess.Popen(cmd, shell=True, cwd="/root", env=env)
 
@@ -142,14 +145,18 @@ def ui():
 def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
     sys.path.insert(0, "/root")
     os.chdir("/root")
-    os.environ["JSON2VIDEO_API_KEY"] = PLATFORM_JSON2VIDEO_KEY
     volume.reload()
     
+    from app.utils import utils
+    from app.config import config
     from app.models.schema import VideoParams
     from app.services import task as tm
     
-    task_dir = f"/root/storage/tasks/{task_id}"
-    os.makedirs(task_dir, exist_ok=True)
+    user_id = str(params_dict.get("user_id") or "default_user").strip()
+    utils.set_current_user_id(user_id)
+    config.switch_user_config(user_id)
+    
+    task_dir = utils.task_dir(task_id, create=True)
     
     state_file = f"{task_dir}/state.json"
     with open(state_file, "w", encoding="utf-8") as f:
@@ -197,7 +204,6 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
 def serve():
     sys.path.insert(0, "/root")
     os.chdir("/root")
-    os.environ["JSON2VIDEO_API_KEY"] = PLATFORM_JSON2VIDEO_KEY
     os.environ["CORS_ALLOWED_ORIGINS"] = "*"
     
     from app.asgi import app as fastapi_app
