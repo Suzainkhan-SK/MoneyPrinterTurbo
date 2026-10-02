@@ -2560,7 +2560,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                             _delete_task(task_id, task["task_path"], task["state"])
                             st.rerun()
                 elif has_video:
-                    act_cols = st.columns([1, 1, 1, 0.6], vertical_alignment="center", gap="small")
+                    act_cols = st.columns([1, 1, 1, 1, 0.6], vertical_alignment="center", gap="small")
                     with act_cols[0]:
                         play_label = tr("Play")
                         if st.button(
@@ -2571,6 +2571,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                             help=play_label,
                         ):
                             _open_task_video(task["video_file"])
+                            st.rerun()
 
                     with act_cols[1]:
                         download_name = _build_video_download_name(
@@ -2622,6 +2623,18 @@ def _render_task_table(filtered_tasks, key_prefix):
                                 st.rerun(scope="app")
 
                     with act_cols[3]:
+                        remake_label = tr("Regenerate Task")
+                        if st.button(
+                            "Remake",
+                            key=f"restore_task_{key_prefix}_{task_id}",
+                            use_container_width=True,
+                            icon=":material/replay:",
+                            help=remake_label,
+                            disabled=is_busy or not has_restore_data,
+                        ):
+                            _queue_task_restore(task_id)
+
+                    with act_cols[4]:
                         if st.button(
                             "🗑️",
                             key=f"delete_task_{key_prefix}_{task_id}",
@@ -2662,12 +2675,70 @@ def _render_task_table(filtered_tasks, key_prefix):
                                 st.error(tr("Task Delete Failed"))
 
 
-def _render_task_manager_panel(tasks=None):
-    tasks = tasks if tasks is not None else _collect_task_summaries()
-    if not tasks:
-        st.info(tr("No Tasks Yet"))
-        return
+def _get_quick_restyle_voice_options(current_voice=""):
+    options = []
+    seen = set()
+    if current_voice:
+        options.append(current_voice)
+        seen.add(current_voice)
 
+    # Top ElevenLabs Premium json2video voices
+    try:
+        j2v_all = voice.get_json2video_voices()
+        for v in j2v_all[:35]:
+            if v not in seen:
+                options.append(v)
+                seen.add(v)
+    except Exception:
+        pass
+
+    # Top Edge TTS voices (Hindi, English US/UK/IN, etc.)
+    top_edge = [
+        "hi-IN-MadhurNeural-Male",
+        "hi-IN-SwaraNeural-Female",
+        "en-US-JennyNeural-Female",
+        "en-US-GuyNeural-Male",
+        "en-US-AriaNeural-Female",
+        "en-US-ChristopherNeural-Male",
+        "en-US-EricNeural-Male",
+        "en-GB-SoniaNeural-Female",
+        "en-GB-RyanNeural-Male",
+        "en-IN-NeerjaNeural-Female",
+        "en-IN-PrabhatNeural-Male",
+        "es-ES-ElviraNeural-Female",
+        "fr-FR-DeniseNeural-Female",
+        "de-DE-KatjaNeural-Female",
+    ]
+    for v in top_edge:
+        if v not in seen:
+            options.append(v)
+            seen.add(v)
+
+    return options
+
+
+def _format_quick_voice_label(v: str) -> str:
+    if not v:
+        return tr("Default Voice")
+    if voice.is_json2video_voice(v):
+        parts = v.split(":", 2)
+        label = parts[2] if len(parts) >= 3 else v
+        return f"✨ {label} [ElevenLabs]"
+    if voice.is_elevenlabs_voice(v):
+        parts = v.split(":", 2)
+        label = parts[2] if len(parts) >= 3 else v
+        return f"✨ {label} [ElevenLabs]"
+    if voice.is_kokoro_voice(v):
+        return f"🎙️ {v.replace('kokoro:', '')} [Kokoro]"
+    clean = (
+        v.replace("Neural-Female", " (Female)")
+        .replace("Neural-Male", " (Male)")
+        .replace("Neural", "")
+    )
+    return f"🌐 {clean} [Edge TTS]"
+
+
+def _render_task_status_tabs(tasks):
     status_tabs = [
         ("all", tr("All Tasks")),
         ("processing", tr("Task Status Processing")),
@@ -2690,11 +2761,34 @@ def _render_task_manager_panel(tasks=None):
             ]
             _render_task_table(filtered_tasks, status_key)
 
-    _render_task_video_preview()
+
+def _render_task_manager_panel(tasks=None):
+    tasks = tasks if tasks is not None else _collect_task_summaries()
+    if not tasks:
+        st.info(tr("No Tasks Yet"))
+        return
+
+    preview_file = st.session_state.get("task_preview_video_file")
+    tasks_root = os.path.abspath(utils.task_dir())
+    has_preview = bool(
+        preview_file
+        and preview_file.startswith(tasks_root + os.sep)
+        and os.path.isfile(preview_file)
+    )
+
+    if has_preview:
+        col_tasks, col_preview = st.columns([1.15, 1.0], gap="medium")
+        with col_tasks:
+            _render_task_status_tabs(tasks)
+        with col_preview:
+            with st.container(border=True):
+                _render_task_video_preview()
+    else:
+        _render_task_status_tabs(tasks)
 
 
 def _render_task_video_preview():
-    # 无桌面部署下“播放”按钮的浏览器内回退：在任务面板底部渲染播放器。
+    # 浏览器内置播放器：在任务管理器右侧渲染播放器与快速换音色/字幕编辑
     preview_file = st.session_state.get("task_preview_video_file")
     if not preview_file:
         return
@@ -2706,7 +2800,6 @@ def _render_task_video_preview():
         st.session_state.pop("task_preview_video_file", None)
         return
 
-    st.divider()
     preview_cols = st.columns([5, 1], vertical_alignment="center")
     task_name = os.path.basename(os.path.dirname(preview_file))
     preview_cols[0].caption(f"{os.path.basename(preview_file)} · {task_name}")
@@ -2714,17 +2807,19 @@ def _render_task_video_preview():
         "✕",
         key="close_task_video_preview",
         use_container_width=True,
-        help=tr("Close"),
+        help=tr("Close Preview"),
     )
     if closed:
         st.session_state.pop("task_preview_video_file", None)
         st.rerun()
         return
+
     st.video(preview_file)
     task_dir_path = os.path.dirname(preview_file)
     task_id = os.path.basename(task_dir_path)
     download_name = os.path.basename(preview_file)
-    btn_cols = st.columns([1, 1])
+
+    btn_cols = st.columns([1, 1], gap="small")
     with btn_cols[0]:
         try:
             with open(preview_file, "rb") as vf:
@@ -2761,6 +2856,7 @@ def _render_task_video_preview():
                 key=f"view_yt_btn_{task_id}",
                 use_container_width=True,
                 icon=":material/smart_display:",
+                help=f"Published on YouTube: {yt_url}",
             )
         else:
             if st.button(
@@ -2783,17 +2879,58 @@ def _render_task_video_preview():
     subtitle_path = os.path.join(task_dir_path, "subtitle.srt")
 
     if os.path.isfile(combined_path) and os.path.isfile(audio_path) and os.path.isfile(subtitle_path):
-        with st.expander("⚡ Quick Re-style Subtitles & Fast Re-render (30s)", expanded=False):
-            st.caption(tr("Tweak subtitle font, colors, position, or text and re-render the video in ~30 seconds without starting over."))
-            
+        with st.expander("⚡ Quick Re-style & Fast Re-render (30s)", expanded=False):
+            st.caption(tr("Tweak voiceover, subtitle font, colors, position, or text and re-render the video in ~30 seconds without starting over."))
+
             current_script = _safe_load_task_script(task_dir_path)
             c_params = current_script.get("params", {}) if current_script else {}
-            
+            curr_voice = c_params.get("voice_name") or "en-US-JennyNeural-Female"
+            try:
+                curr_rate = float(c_params.get("voice_rate", 1.0))
+            except (TypeError, ValueError):
+                curr_rate = 1.0
+            curr_rate = max(0.7, min(1.5, curr_rate))
+
+            curr_narration = current_script.get("script") or c_params.get("video_script", "")
+
+            st.markdown(f"**🎙️ {tr('Voice & Narration')}**")
+            voice_cols = st.columns([1.8, 1.2])
+            with voice_cols[0]:
+                voice_options = _get_quick_restyle_voice_options(curr_voice)
+                v_idx = voice_options.index(curr_voice) if curr_voice in voice_options else 0
+                selected_voice = st.selectbox(
+                    tr("Voice Name"),
+                    options=voice_options,
+                    index=v_idx,
+                    format_func=_format_quick_voice_label,
+                    key=f"restyle_voice_{task_id}",
+                    help="Select a different voice for instant re-render (~30s)",
+                )
+            with voice_cols[1]:
+                selected_rate = st.slider(
+                    tr("Speech Rate"),
+                    min_value=0.7,
+                    max_value=1.5,
+                    value=curr_rate,
+                    step=0.05,
+                    format="%.2fx",
+                    key=f"restyle_rate_{task_id}",
+                )
+
+            edited_narration = st.text_area(
+                tr("Voiceover Script"),
+                value=curr_narration,
+                height=90,
+                key=f"restyle_narration_{task_id}",
+                help=tr("Edit narration script to synthesize new audio."),
+            )
+
+            st.markdown(f"**🎨 {tr('Subtitles & Styling')}**")
             restyle_cols = st.columns(2)
             all_fonts = get_all_fonts() or ["Nirmala.ttc", "MicrosoftYaHeiBold.ttc"]
             curr_font = c_params.get("font_name", "Nirmala.ttc")
             font_idx = all_fonts.index(curr_font) if (curr_font and curr_font in all_fonts) else 0
-            
+
             with restyle_cols[0]:
                 selected_font = st.selectbox(
                     tr("Font"),
@@ -2867,29 +3004,76 @@ def _render_task_video_preview():
             edited_subs = st.text_area(
                 tr("Subtitle Content (SRT)"),
                 value=sub_content,
-                height=130,
+                height=110,
                 key=f"restyle_srt_{task_id}",
                 help=tr("You can fix any typos in the subtitles directly here."),
             )
 
             if st.button("⚡ Fast Re-render (~30s)", key=f"restyle_btn_{task_id}", type="primary", use_container_width=True):
-                with st.spinner(tr("Re-rendering video with fast hardware FFmpeg...")):
-                    from app.services.fast_render import fast_restyle_task
-                    ok, msg = fast_restyle_task(
-                        task_path=task_dir_path,
-                        font_name=selected_font,
-                        font_size=selected_size,
-                        text_color=selected_color,
-                        outline_color=selected_outline_color,
-                        outline_width=selected_outline_width,
-                        position=selected_pos,
-                        updated_subtitles_text=edited_subs,
-                    )
-                    if ok:
-                        st.toast("🎉 Video re-rendered successfully!", icon="✅")
-                        st.rerun()
-                    else:
-                        st.error(f"Re-render failed: {msg}")
+                is_voice_changed = (selected_voice != curr_voice)
+                is_rate_changed = abs(selected_rate - curr_rate) > 0.04
+                is_script_changed = bool(edited_narration.strip() and edited_narration.strip() != curr_narration.strip())
+                need_tts = is_voice_changed or is_rate_changed or is_script_changed
+
+                tts_ok = True
+                if need_tts:
+                    with st.spinner("🎙️ Synthesizing new voiceover audio..."):
+                        tts_script = edited_narration.strip() or curr_narration.strip()
+                        new_sub_maker = voice.tts(
+                            text=tts_script,
+                            voice_name=voice.parse_voice_name(selected_voice),
+                            voice_rate=selected_rate,
+                            voice_file=audio_path,
+                        )
+                        if new_sub_maker is None:
+                            tts_ok = False
+                            st.error("Audio synthesis failed. Please verify your selected voice and API key connectivity.")
+                        else:
+                            is_word_level = (c_params.get("subtitle_display_mode") == "word_by_word")
+                            voice.create_subtitle(
+                                text=tts_script,
+                                sub_maker=new_sub_maker,
+                                subtitle_file=subtitle_path,
+                                word_level=is_word_level,
+                            )
+                            try:
+                                with open(subtitle_path, "r", encoding="utf-8") as sf:
+                                    edited_subs = sf.read()
+                            except Exception:
+                                pass
+
+                if tts_ok:
+                    with st.spinner(tr("Re-rendering video with fast hardware FFmpeg...")):
+                        from app.services.fast_render import fast_restyle_task
+                        ok, msg = fast_restyle_task(
+                            task_path=task_dir_path,
+                            font_name=selected_font,
+                            font_size=selected_size,
+                            text_color=selected_color,
+                            outline_color=selected_outline_color,
+                            outline_width=selected_outline_width,
+                            position=selected_pos,
+                            updated_subtitles_text=edited_subs,
+                            voice_name=selected_voice,
+                            voice_rate=selected_rate,
+                        )
+                        if ok:
+                            if is_script_changed:
+                                try:
+                                    script_file = os.path.join(task_dir_path, "script.json")
+                                    if os.path.isfile(script_file):
+                                        with open(script_file, "r", encoding="utf-8") as sf:
+                                            sdata = json.load(sf)
+                                        sdata["script"] = edited_narration.strip()
+                                        sdata.setdefault("params", {})["video_script"] = edited_narration.strip()
+                                        with open(script_file, "w", encoding="utf-8") as sf:
+                                            json.dump(sdata, sf, ensure_ascii=False, indent=2)
+                                except Exception as e:
+                                    logger.warning(f"failed to update script text in script.json: {e}")
+                            st.toast("🎉 Video re-rendered successfully!", icon="✅")
+                            st.rerun()
+                        else:
+                            st.error(f"Re-render failed: {msg}")
 
 
 @st.fragment(run_every="3s")
@@ -2900,10 +3084,20 @@ def _render_task_manager_entry():
     processing_task_count = _count_processing_tasks(task_summaries)
     if processing_task_count > 0:
         _maybe_reload_cloud_volume(min_interval=15.0)
-    with st.container(key="task_manager_entry", width="content"):
+
+    preview_file = st.session_state.get("task_preview_video_file")
+    tasks_root = os.path.abspath(utils.task_dir())
+    has_preview = bool(
+        preview_file
+        and preview_file.startswith(tasks_root + os.sep)
+        and os.path.isfile(preview_file)
+    )
+    popover_width = 1150 if has_preview else "content"
+
+    with st.container(key="task_manager_entry", width=popover_width):
         with st.popover(
             _task_manager_label(processing_task_count),
-            width="content",
+            width=popover_width,
             key=(
                 "task_manager_popover_"
                 f"{st.session_state.get('task_manager_popover_nonce', 0)}"
@@ -3584,17 +3778,68 @@ def _render_generation_task_snapshot(task_id, task):
                     i + 1,
                     len(video_files),
                 )
-                with open(url, "rb") as video_file:
-                    st.download_button(
-                        download_label,
-                        data=video_file,
-                        file_name=download_name,
-                        mime=mimetypes.guess_type(url)[0] or "video/mp4",
-                        key=f"download_generated_video_{task_id}_{i}",
-                        icon=":material/download:",
-                        on_click="ignore",
-                        use_container_width=True,
-                    )
+                snap_btn_cols = st.columns(2)
+                with snap_btn_cols[0]:
+                    with open(url, "rb") as video_file:
+                        st.download_button(
+                            download_label,
+                            data=video_file,
+                            file_name=download_name,
+                            mime=mimetypes.guess_type(url)[0] or "video/mp4",
+                            key=f"download_generated_video_{task_id}_{i}",
+                            icon=":material/download:",
+                            on_click="ignore",
+                            use_container_width=True,
+                        )
+
+                with snap_btn_cols[1]:
+                    try:
+                        task_meta = {}
+                        if "sm" in globals() and hasattr(sm, "state"):
+                            try:
+                                task_meta = sm.state.get_task(task_id) or {}
+                            except Exception:
+                                pass
+                        if not task_meta:
+                            snap_task_path = task.get("task_path") or os.path.dirname(url)
+                            state_file = os.path.join(snap_task_path, "state.json")
+                            if os.path.isfile(state_file):
+                                try:
+                                    import json
+                                    with open(state_file, "r", encoding="utf-8") as f:
+                                        task_meta = json.load(f)
+                                except Exception:
+                                    pass
+                        yt_url = task_meta.get("youtube_url") or task.get("youtube_url")
+                        if yt_url:
+                            if hasattr(st, "link_button"):
+                                st.link_button(
+                                    "🎬 View on YouTube",
+                                    yt_url,
+                                    key=f"snapshot_view_yt_btn_{task_id}_{i}",
+                                    use_container_width=True,
+                                    icon=":material/smart_display:",
+                                    help=f"Published on YouTube: {yt_url}",
+                                )
+                        else:
+                            if hasattr(st, "button") and st.button(
+                                "🚀 Upload to YouTube",
+                                key=f"snapshot_yt_upload_btn_{task_id}_{i}",
+                                use_container_width=True,
+                                icon=":material/upload:",
+                                help="Publish this video directly to your connected YouTube channel via Google OAuth",
+                            ):
+                                snap_task_path = task.get("task_path") or os.path.dirname(url)
+                                st.session_state["active_yt_task_dialog"] = {
+                                    "task_id": task_id,
+                                    "video_file": url,
+                                    "task_path": snap_task_path,
+                                    "subject": task.get("video_subject") or task.get("subject", task_id),
+                                }
+                                if hasattr(st, "rerun"):
+                                    st.rerun(scope="app")
+                    except Exception as yt_exc:
+                        logger.warning(f"failed to render snapshot YouTube upload button: {yt_exc}")
     except Exception as exc:
         logger.exception(
             f"failed to render generated video preview: task_id={task_id}, "

@@ -36,9 +36,11 @@ def fast_restyle_task(
     outline_width: float = 2.5,
     position: str = "bottom",
     updated_subtitles_text: str | None = None,
+    voice_name: str | None = None,
+    voice_rate: float | None = None,
 ) -> tuple[bool, str]:
     """
-    Fast hardware-accelerated re-rendering of final video with updated subtitles.
+    Fast hardware-accelerated re-rendering of final video with updated subtitles and voice.
     Takes existing combined-1.mp4 and audio.mp3, burns updated subtitles via multi-threaded
     FFmpeg, and updates final-1.mp4 in ~30s.
     """
@@ -116,12 +118,14 @@ def fast_restyle_task(
 
     cmd = [
         ffmpeg_bin, "-y",
+        "-stream_loop", "-1",
         "-i", combined_mp4,
         "-i", audio_mp3,
         "-filter_complex", f"[0:v]format=yuv420p{sub_filter}[v];[1:a]volume=1.0[a]",
         "-map", "[v]", "-map", "[a]",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
         "-c:a", "aac", "-b:a", "192k",
+        "-shortest",
         "-movflags", "+faststart",
         temp_final
     ]
@@ -148,7 +152,7 @@ def fast_restyle_task(
         except Exception as e2:
             return False, f"Failed to update final-1.mp4: {e2}"
 
-    # Update script.json params with new subtitle styling
+    # Update script.json params with new subtitle styling and voice
     script_file = os.path.join(task_path, "script.json")
     if os.path.isfile(script_file):
         try:
@@ -161,6 +165,10 @@ def fast_restyle_task(
             params["stroke_color"] = outline_color
             params["stroke_width"] = safe_outline
             params["subtitle_position"] = position
+            if voice_name:
+                params["voice_name"] = voice_name
+            if voice_rate is not None:
+                params["voice_rate"] = float(voice_rate)
             with open(script_file, "w", encoding="utf-8") as f:
                 json.dump(sdata, f, ensure_ascii=False, indent=2)
         except Exception as e:
