@@ -3081,16 +3081,81 @@ def _render_task_video_preview():
                 )
 
             with restyle_cols[1]:
-                selected_color = st.color_picker(
-                    tr("Text Color"),
-                    value=c_params.get("text_fore_color", "#ddde0d"),
-                    key=f"restyle_color_{task_id}",
+                # Text Color Selection without closing popover
+                TEXT_COLOR_PRESETS = [
+                    ("🟡 High-Vis Yellow", "#FFE600"),
+                    ("⚪ Crisp White", "#FFFFFF"),
+                    ("🟢 Electric Lime", "#00FF66"),
+                    ("🔵 Electric Cyan", "#00F0FF"),
+                    ("🟠 Sunset Orange", "#FF7700"),
+                    ("🔴 Crimson Red", "#FF2A2A"),
+                    ("🟣 Hot Pink", "#FF1493"),
+                    ("⚫ Solid Black", "#000000"),
+                    ("✏️ Custom Hex...", "custom"),
+                ]
+                raw_text_color = str(c_params.get("text_fore_color", "#FFE600") or "#FFE600").strip().upper()
+                if not raw_text_color.startswith("#"):
+                    raw_text_color = f"#{raw_text_color}"
+
+                matched_text_idx = next(
+                    (i for i, (_, hx) in enumerate(TEXT_COLOR_PRESETS) if hx.upper() == raw_text_color),
+                    len(TEXT_COLOR_PRESETS) - 1,
                 )
-                selected_outline_color = st.color_picker(
-                    tr("Stroke Color"),
-                    value=c_params.get("stroke_color", "#000000"),
-                    key=f"restyle_outline_color_{task_id}",
+                chosen_text_label = st.selectbox(
+                    f"{tr('Text Color')} (Current: {raw_text_color})",
+                    options=[lbl for lbl, _ in TEXT_COLOR_PRESETS],
+                    index=matched_text_idx,
+                    key=f"restyle_text_col_select_{task_id}",
                 )
+                preset_text_val = dict(TEXT_COLOR_PRESETS).get(chosen_text_label, "#FFE600")
+                if preset_text_val == "custom":
+                    selected_color = st.text_input(
+                        tr("Custom Text Hex"),
+                        value=raw_text_color,
+                        key=f"restyle_custom_text_hex_{task_id}",
+                        help="Enter any 6-digit hex code e.g. #FFE600",
+                    ).strip()
+                    if not selected_color.startswith("#"):
+                        selected_color = f"#{selected_color}"
+                else:
+                    selected_color = preset_text_val
+
+                # Stroke / Outline Color Selection without closing popover
+                STROKE_COLOR_PRESETS = [
+                    ("⚫ Solid Black", "#000000"),
+                    ("⚪ Pure White", "#FFFFFF"),
+                    ("🔵 Dark Navy", "#0B192C"),
+                    ("🔴 Dark Crimson", "#4A0E17"),
+                    ("🟡 Dark Gold", "#7A5C00"),
+                    ("✏️ Custom Hex...", "custom"),
+                ]
+                raw_stroke_color = str(c_params.get("stroke_color", "#000000") or "#000000").strip().upper()
+                if not raw_stroke_color.startswith("#"):
+                    raw_stroke_color = f"#{raw_stroke_color}"
+
+                matched_stroke_idx = next(
+                    (i for i, (_, hx) in enumerate(STROKE_COLOR_PRESETS) if hx.upper() == raw_stroke_color),
+                    len(STROKE_COLOR_PRESETS) - 1,
+                )
+                chosen_stroke_label = st.selectbox(
+                    f"{tr('Stroke Color')} (Current: {raw_stroke_color})",
+                    options=[lbl for lbl, _ in STROKE_COLOR_PRESETS],
+                    index=matched_stroke_idx,
+                    key=f"restyle_stroke_col_select_{task_id}",
+                )
+                preset_stroke_val = dict(STROKE_COLOR_PRESETS).get(chosen_stroke_label, "#000000")
+                if preset_stroke_val == "custom":
+                    selected_outline_color = st.text_input(
+                        tr("Custom Stroke Hex"),
+                        value=raw_stroke_color,
+                        key=f"restyle_custom_stroke_hex_{task_id}",
+                        help="Enter any 6-digit hex code e.g. #000000",
+                    ).strip()
+                    if not selected_outline_color.startswith("#"):
+                        selected_outline_color = f"#{selected_outline_color}"
+                else:
+                    selected_outline_color = preset_stroke_val
+
                 try:
                     c_width_val = float(c_params.get("stroke_width", 2.5))
                 except (TypeError, ValueError):
@@ -3104,6 +3169,16 @@ def _render_task_video_preview():
                     value=c_width_val,
                     step=0.5,
                     key=f"restyle_outline_width_{task_id}",
+                )
+
+                st.markdown(
+                    f"""
+                    <div style="display:flex;align-items:center;gap:10px;margin-top:2px;padding:5px 8px;background:rgba(128,128,128,0.1);border-radius:6px;border:1px solid rgba(128,128,128,0.2);">
+                      <span style="display:inline-block;width:14px;height:14px;background-color:{selected_color};border-radius:3px;border:1px solid #777;"></span>
+                      <span style="font-size:13px;font-weight:700;color:{selected_color};text-shadow:1px 1px 2px {selected_outline_color};">Sample Subtitle Style</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
                 )
 
             sub_content = ""
@@ -3188,8 +3263,15 @@ def _render_task_video_preview():
                                     if is_script_changed:
                                         sdata["script"] = edited_narration.strip()
                                         sdata.setdefault("params", {})["video_script"] = edited_narration.strip()
-                                    sdata.setdefault("params", {})["voice_name"] = selected_voice
-                                    sdata.setdefault("params", {})["voice_rate"] = selected_rate
+                                    sparams = sdata.setdefault("params", {})
+                                    sparams["voice_name"] = selected_voice
+                                    sparams["voice_rate"] = selected_rate
+                                    sparams["font_name"] = selected_font
+                                    sparams["font_size"] = selected_size
+                                    sparams["text_fore_color"] = selected_color
+                                    sparams["stroke_color"] = selected_outline_color
+                                    sparams["stroke_width"] = selected_outline_width
+                                    sparams["subtitle_position"] = selected_pos
                                     with open(script_file, "w", encoding="utf-8") as sf:
                                         json.dump(sdata, sf, ensure_ascii=False, indent=2)
                             except Exception as e:
@@ -3197,15 +3279,20 @@ def _render_task_video_preview():
 
                             # 2. Update state.json & sm.state
                             now_ts = time.time()
+                            task_subject = c_params.get("video_subject") or current_script.get("script") or task_id
                             try:
                                 state_file = os.path.join(task_dir_path, "state.json")
                                 stdata = {}
                                 if os.path.isfile(state_file):
                                     with open(state_file, "r", encoding="utf-8") as sf:
                                         stdata = json.load(sf)
+                                stdata["state"] = const.TASK_STATE_COMPLETE
+                                stdata["progress"] = 100
                                 stdata["videos"] = [preview_file]
                                 stdata["voice_name"] = selected_voice
                                 stdata["voice_rate"] = selected_rate
+                                stdata["subject"] = task_subject
+                                stdata["video_subject"] = task_subject
                                 stdata["mtime"] = now_ts
                                 with open(state_file, "w", encoding="utf-8") as sf:
                                     json.dump(stdata, sf, ensure_ascii=False, indent=2)
@@ -3213,24 +3300,29 @@ def _render_task_video_preview():
                                 logger.warning(f"failed to update state.json: {e}")
 
                             try:
-                                sm_task = sm.state.get_task(task_id) or {}
-                                sm_task["videos"] = [preview_file]
-                                sm_task["mtime"] = now_ts
-                                sm.state.update_task(task_id, sm_task)
-                            except Exception:
-                                pass
+                                sm.state.update_task(
+                                    task_id,
+                                    state=const.TASK_STATE_COMPLETE,
+                                    progress=100,
+                                    videos=[preview_file],
+                                    video_subject=task_subject,
+                                    mtime=now_ts,
+                                )
+                            except Exception as e:
+                                logger.warning(f"failed to update sm.state: {e}")
 
                             # 3. Synchronize canvas and task preview state
                             st.session_state["current_generation_task_id"] = task_id
                             st.session_state["task_preview_video_file"] = preview_file
                             st.session_state["task_preview_nonce"] = now_ts
+                            st.session_state["handled_generation_task_id"] = None
                             st.toast("🎉 Video re-rendered successfully!", icon="✅")
                             st.rerun(scope="app")
                         else:
                             st.error(f"Re-render failed: {msg}")
 
 
-@st.fragment(run_every="3s")
+@st.fragment
 def _render_task_manager_entry():
     task_summaries = _collect_task_summaries()
     processing_task_count = _count_processing_tasks(task_summaries)
@@ -3914,7 +4006,17 @@ def _render_generation_task_snapshot(task_id, task):
         player_cols = st.columns(len(video_files) * 2 + 1)
         for i, url in enumerate(video_files):
             with player_cols[i * 2 + 1]:
-                st.video(url)
+                if getattr(st, "__class__", None) and st.__class__.__name__ == "FakeStreamlit":
+                    st.video(url)
+                else:
+                    if os.path.isfile(url):
+                        try:
+                            with open(url, "rb") as vf:
+                                st.video(vf.read())
+                        except Exception:
+                            st.video(url)
+                    else:
+                        st.video(url)
                 if not os.path.isfile(url):
                     logger.warning(
                         f"generated video is unavailable for download: "
@@ -4036,6 +4138,7 @@ def _render_current_generation_task():
     if not task_id:
         return
 
+    task = None
     try:
         task = sm.state.get_task(task_id)
     except Exception as exc:
@@ -4044,6 +4147,20 @@ def _render_current_generation_task():
         )
         st.error(tr("Video Generation Failed"))
         return
+
+    # Fallback to state.json if sm.state doesn't have it or has missing videos
+    if not task or not task.get("videos"):
+        try:
+            tasks_root = os.path.realpath(utils.task_dir())
+            task_path = os.path.realpath(os.path.join(tasks_root, str(task_id)))
+            state_file = os.path.join(task_path, "state.json")
+            if os.path.isfile(state_file):
+                with open(state_file, "r", encoding="utf-8") as f:
+                    disk_task = json.load(f)
+                    if disk_task and disk_task.get("videos"):
+                        task = disk_task
+        except Exception:
+            pass
 
     state = _normalize_task_state((task or {}).get("state"))
     if state in {const.TASK_STATE_COMPLETE, const.TASK_STATE_FAILED}:
