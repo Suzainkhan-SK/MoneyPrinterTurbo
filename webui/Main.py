@@ -3051,15 +3051,17 @@ def _render_task_video_preview():
                     key=f"restyle_font_{task_id}",
                 )
                 try:
-                    c_size_val = int(c_params.get("font_size", 24))
+                    c_size_val = int(c_params.get("font_size", 55))
                 except (TypeError, ValueError):
-                    c_size_val = 24
-                c_size_val = max(14, min(60, c_size_val))
+                    c_size_val = 55
+                if c_size_val <= 28:
+                    c_size_val = 55
+                c_size_val = max(30, min(90, c_size_val))
 
                 selected_size = st.slider(
                     tr("Font Size"),
-                    min_value=14,
-                    max_value=60,
+                    min_value=30,
+                    max_value=90,
                     value=c_size_val,
                     key=f"restyle_size_{task_id}",
                 )

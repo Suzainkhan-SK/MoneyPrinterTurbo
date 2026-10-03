@@ -27,10 +27,107 @@ def hex_to_ass_color(hex_str: str, default: str = "&H000DDDDE") -> str:
         return f"&H00{b}{g}{r}".upper()
     return default
 
+def srt_time_to_ass(srt_time: str) -> str:
+    """Convert SRT time '00:01:23,456' to ASS time '0:01:23.46'."""
+    match = re.match(r"(\d+):(\d+):(\d+)[,\.](\d+)", srt_time.strip())
+    if not match:
+        return "0:00:00.00"
+    h, m, s, ms = match.groups()
+    hours = int(h)
+    mins = int(m)
+    secs = int(s)
+    cs = round(int(ms[:3].ljust(3, "0")) / 10.0)
+    if cs >= 100:
+        cs = 99
+    return f"{hours}:{mins:02d}:{secs:02d}.{cs:02d}"
+
+
+def convert_srt_to_ass(
+    srt_path: str,
+    ass_path: str,
+    video_width: int,
+    video_height: int,
+    font_name: str,
+    font_size: int,
+    text_color: str,
+    outline_color: str,
+    outline_width: float,
+    position: str = "bottom",
+) -> bool:
+    try:
+        with open(srt_path, "r", encoding="utf-8") as f:
+            srt_content = f.read()
+
+        blocks = re.split(r"\n\s*\n", srt_content.strip())
+        dialogues = []
+        for b in blocks:
+            lines = [l.strip() for l in b.strip().split("\n") if l.strip()]
+            if len(lines) >= 2:
+                time_line = lines[1] if re.match(r"^\d+$", lines[0]) else lines[0]
+                text_lines = lines[2:] if re.match(r"^\d+$", lines[0]) else lines[1:]
+                time_match = re.search(r"(\d+:\d+:\d+[,\.]\d+)\s*-->\s*(\d+:\d+:\d+[,\.]\d+)", time_line)
+                if time_match and text_lines:
+                    start_ass = srt_time_to_ass(time_match.group(1))
+                    end_ass = srt_time_to_ass(time_match.group(2))
+                    text = "\\N".join(text_lines)
+                    dialogues.append(f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,{text}")
+
+        primary_ass = hex_to_ass_color(text_color, "&H000DDDDE")
+        outline_ass = hex_to_ass_color(outline_color, "&H00000000")
+
+        pos_lower = position.lower()
+        if pos_lower == "top":
+            align = 8
+            margin_v = int(video_height * 0.08)
+        elif pos_lower == "center":
+            align = 5
+            margin_v = 0
+        elif pos_lower in ("two_thirds_bottom", "two-thirds", "two_thirds", "2/3_bottom", "2/3"):
+            align = 8
+            margin_v = int(video_height * 0.33)
+        else:  # bottom
+            align = 2
+            margin_v = int(video_height * 0.10)
+
+        margin_lr = int(video_width * 0.07)
+
+        # Normalize font size to video resolution
+        scaled_font_size = int(font_size)
+        if scaled_font_size <= 28:
+            scaled_font_size = 55
+        scaled_font_size = max(20, min(int(video_height * 0.08), scaled_font_size))
+
+        base_dim = min(video_width, video_height)
+        scaled_outline = max(1.0, float(outline_width) * (base_dim / 720.0))
+
+        ass_content = f"""[Script Info]
+Title: MoneyPrinterTurbo Fast Restyle
+ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+PlayResX: {video_width}
+PlayResY: {video_height}
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{font_name},{scaled_font_size},{primary_ass},&H000000FF,{outline_ass},&H00000000,1,0,0,0,100,100,0,0,1,{scaled_outline:.1f},1.5,{align},{margin_lr},{margin_lr},{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+""" + "\n".join(dialogues) + "\n"
+
+        with open(ass_path, "w", encoding="utf-8") as f:
+            f.write(ass_content)
+        return True
+    except Exception as e:
+        logger.warning(f"failed to convert srt to ass: {e}")
+        return False
+
+
 def fast_restyle_task(
     task_path: str,
     font_name: str = "Noto Sans Devanagari",
-    font_size: int = 24,
+    font_size: int = 55,
     text_color: str = "#ddde0d",
     outline_color: str = "#000000",
     outline_width: float = 2.5,
@@ -98,13 +195,13 @@ def fast_restyle_task(
     primary_ass = hex_to_ass_color(text_color, "&H000DDDDE")
     outline_ass = hex_to_ass_color(outline_color, "&H00000000")
 
-    # Alignment and margins
+    # Alignment and margins fallback
     pos_lower = position.lower()
     if pos_lower == "top":
-        align = 6
+        align = 8
         margin_v = 35
     elif pos_lower == "center":
-        align = 10
+        align = 5
         margin_v = 10
     elif pos_lower in ("two_thirds_bottom", "two-thirds", "2/3"):
         align = 2
@@ -113,16 +210,50 @@ def fast_restyle_task(
         align = 2
         margin_v = 35
 
-    # Safe font size
-    safe_font_size = max(12, min(72, int(font_size)))
+    # Safe font size and outline for fallback
+    safe_font_size = max(16, min(40, int(font_size)))
     safe_outline = max(0.0, min(8.0, float(outline_width)))
 
-    sub_filter = (
-        f",subtitles='{escaped_sub}':fontsdir='{escaped_fonts_dir}':force_style='"
-        f"FontName={font_family},FontSize={safe_font_size},Bold=1,"
-        f"PrimaryColour={primary_ass},OutlineColour={outline_ass},"
-        f"BorderStyle=1,Outline={safe_outline},Shadow=1,Alignment={align},MarginV={margin_v}'"
+    # Determine video dimensions and duration
+    video_width = 1080
+    video_height = 1920
+    video_duration = 0.0
+    try:
+        from moviepy import VideoFileClip
+        with VideoFileClip(combined_mp4) as clip:
+            video_duration = float(clip.duration or 0.0)
+            if clip.w and clip.h:
+                video_width = int(clip.w)
+                video_height = int(clip.h)
+    except Exception:
+        pass
+
+    # Convert SRT to ASS with exact video resolution for pixel-perfect typography
+    ass_file = os.path.join(task_path, "restyle_subtitles.ass")
+    ass_converted = convert_srt_to_ass(
+        srt_path=subtitle_srt,
+        ass_path=ass_file,
+        video_width=video_width,
+        video_height=video_height,
+        font_name=font_family,
+        font_size=font_size,
+        text_color=text_color,
+        outline_color=outline_color,
+        outline_width=outline_width,
+        position=position,
     )
+
+    if ass_converted and os.path.isfile(ass_file):
+        escaped_ass = ass_file.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        sub_filter = f",subtitles='{escaped_ass}':fontsdir='{escaped_fonts_dir}'"
+    else:
+        # Fallback to SRT if ASS conversion fails
+        sub_filter = (
+            f",subtitles='{escaped_sub}':fontsdir='{escaped_fonts_dir}':force_style='"
+            f"FontName={font_family},FontSize={safe_font_size},Bold=1,"
+            f"PrimaryColour={primary_ass},OutlineColour={outline_ass},"
+            f"BorderStyle=1,Outline={safe_outline},Shadow=1,Alignment={align},MarginV={margin_v}'"
+        )
 
     temp_final = os.path.join(task_path, "final-restyle-temp.mp4")
     ffmpeg_bin = get_ffmpeg_binary()
@@ -135,15 +266,6 @@ def fast_restyle_task(
         audio_duration = float(voice.get_audio_duration(audio_mp3) or 0.0)
     except Exception:
         pass
-
-    video_duration = 0.0
-    if audio_duration > 0:
-        try:
-            from moviepy import VideoFileClip
-            with VideoFileClip(combined_mp4) as clip:
-                video_duration = float(clip.duration or 0.0)
-        except Exception:
-            pass
 
     # Finite loop only if audio is strictly longer than video
     loop_args = []
