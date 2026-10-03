@@ -182,6 +182,11 @@ query_token = st.query_params.get("token", "")
 query_user_id = st.query_params.get("user_id", "") or st.query_params.get("uid", "")
 query_email = st.query_params.get("email", "")
 query_theme = st.query_params.get("theme", "light")
+query_studio = st.query_params.get("studio", "")
+if query_studio.lower() in ("thumbnail", "thumbnails"):
+    st.session_state.setdefault("active_studio", "thumbnail")
+else:
+    st.session_state.setdefault("active_studio", "stock")
 query_embedded = st.query_params.get("embedded", "0")
 is_embedded = query_embedded in ("1", "true")
 
@@ -3690,11 +3695,10 @@ def _render_pending_version_check():
 
 def _render_top_bar():
     """渲染品牌、任务管理、设置和语言切换组成的页面顶部栏。"""
-    # 顶部栏分为品牌区和操作区两个独立区域。窄屏下由 Streamlit
-    # 将两个区域整体换行，操作区内部再根据剩余宽度自动换行。
+    # 顶部栏分为品牌区、工作室导航区和操作区
     with st.container(key="top_bar"):
-        brand_col, actions_col = st.columns(
-            [3.5, 2.0],
+        brand_col, switcher_col, actions_col = st.columns(
+            [1.8, 2.0, 1.8],
             vertical_alignment="center",
             gap="small",
         )
@@ -3705,6 +3709,22 @@ def _render_top_bar():
             _render_brand(update_snapshot.available_version)
         else:
             _render_pending_version_check()
+
+    with switcher_col:
+        studio_options = ["🎬 Stock Studio", "🖼️ Thumbnail Studio"]
+        curr_studio = st.session_state.get("active_studio", "stock")
+        default_val = "🖼️ Thumbnail Studio" if curr_studio == "thumbnail" else "🎬 Stock Studio"
+        selected_studio_label = st.segmented_control(
+            "Studio Switcher",
+            options=studio_options,
+            default=default_val,
+            key="top_studio_switcher_ctrl",
+            label_visibility="collapsed",
+        )
+        new_studio = "thumbnail" if selected_studio_label == "🖼️ Thumbnail Studio" else "stock"
+        if new_studio != curr_studio:
+            st.session_state["active_studio"] = new_studio
+            st.rerun()
 
     with actions_col:
         with st.container(
@@ -10736,6 +10756,12 @@ def _render_generation_controls(
 def _render_application():
     """按固定顺序渲染顶部栏、弹窗、生成表单和任务结果。"""
     _render_top_bar()
+
+    active_studio = st.session_state.get("active_studio", "stock")
+    if active_studio == "thumbnail":
+        from webui.thumbnail_studio import render_thumbnail_studio
+        render_thumbnail_studio()
+        return
 
     if st.session_state.get("settings_dialog_open", False):
         _render_settings_dialog()
