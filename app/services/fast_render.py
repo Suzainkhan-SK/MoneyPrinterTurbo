@@ -127,23 +127,52 @@ def fast_restyle_task(
     temp_final = os.path.join(task_path, "final-restyle-temp.mp4")
     ffmpeg_bin = get_ffmpeg_binary()
 
+    # Determine audio and video duration to avoid infinite stream looping
+    import math
+    audio_duration = 0.0
+    try:
+        from app.services import voice
+        audio_duration = float(voice.get_audio_duration(audio_mp3) or 0.0)
+    except Exception:
+        pass
+
+    video_duration = 0.0
+    if audio_duration > 0:
+        try:
+            from moviepy import VideoFileClip
+            with VideoFileClip(combined_mp4) as clip:
+                video_duration = float(clip.duration or 0.0)
+        except Exception:
+            pass
+
+    # Finite loop only if audio is strictly longer than video
+    loop_args = []
+    if audio_duration > 0 and video_duration > 0 and audio_duration > video_duration:
+        loops = int(math.ceil(audio_duration / video_duration)) - 1
+        if loops > 0:
+            loop_args = ["-stream_loop", str(loops)]
+
+    # Hard stop duration guarantees termination without hanging or infinite loops
+    duration_args = ["-t", f"{audio_duration:.2f}"] if audio_duration > 0 else ["-shortest"]
+
     cmd = [
         ffmpeg_bin, "-y",
-        "-stream_loop", "-1",
+        *loop_args,
         "-i", combined_mp4,
         "-i", audio_mp3,
         "-filter_complex", f"[0:v]format=yuv420p{sub_filter}[v];[1:a]volume=1.0[a]",
         "-map", "[v]", "-map", "[a]",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+        "-threads", "0",
         "-c:a", "aac", "-b:a", "192k",
-        "-shortest",
+        *duration_args,
         "-movflags", "+faststart",
         temp_final
     ]
 
-    logger.info(f"Running fast restyle FFmpeg for {task_path}...")
+    logger.info(f"Running fast restyle FFmpeg for {task_path} (audio_dur={audio_duration:.2f}s, video_dur={video_duration:.2f}s)...")
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
         if res.returncode != 0:
             logger.error(f"FFmpeg fast restyle error: {res.stderr[-500:]}")
             return False, f"FFmpeg failed: {res.stderr[-200:]}"
