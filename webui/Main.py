@@ -720,12 +720,56 @@ div[class*="st-key-open_voice_settings_btn"] button:active {
     transform: translateY(0) !important;
 }
 
-/* Popover Dialogs */
-div[data-testid="stPopoverBody"] {
+/* Popover & Modal Dialogs (Light) */
+div[data-testid="stPopoverBody"],
+div[data-testid="stDialog"] div[role="dialog"],
+div[data-testid="stModal"] div[role="dialog"],
+div[data-baseweb="modal"] div[role="dialog"],
+div[data-baseweb="modal"] > div:last-child {
     background-color: #fffefb !important;
-    border: 1px solid #c5c0b1 !important;
+    border: 1.5px solid #c5c0b1 !important;
     box-shadow: 0 16px 40px rgba(32, 21, 21, 0.12) !important;
     border-radius: 14px !important;
+    color: #201515 !important;
+}
+div[data-testid="stDialog"] h1,
+div[data-testid="stDialog"] h2,
+div[data-testid="stDialog"] h3 {
+    color: #201515 !important;
+}
+div[data-baseweb="tab-list"] {
+    border-bottom: 1.5px solid #c5c0b1 !important;
+    gap: 6px !important;
+}
+button[data-baseweb="tab"] {
+    color: #605d52 !important;
+    font-size: 13.5px !important;
+    font-weight: 500 !important;
+}
+button[data-baseweb="tab"] p {
+    color: #605d52 !important;
+}
+button[data-baseweb="tab"]:hover {
+    color: #201515 !important;
+    background: rgba(32, 21, 21, 0.04) !important;
+}
+button[data-baseweb="tab"]:hover p {
+    color: #201515 !important;
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: #ff4f00 !important;
+    font-weight: 700 !important;
+}
+button[data-baseweb="tab"][aria-selected="true"] p {
+    color: #ff4f00 !important;
+    font-weight: 700 !important;
+}
+div[data-baseweb="tab-highlight"] {
+    background-color: #ff4f00 !important;
+    height: 2.5px !important;
+    border-radius: 2px !important;
+}
+div[data-testid="stPopoverBody"] {
     max-width: 96vw !important;
     width: max-content !important;
 }
@@ -1102,12 +1146,180 @@ div[class*="st-key-open_voice_settings_btn"] button:hover {
     transform: translateY(-1px) !important;
 }
 
-/* Dark Popover Dialogs */
-div[data-testid="stPopoverBody"] {
-    background-color: #251c1c !important;
-    border: 1px solid rgba(255, 255, 255, 0.14) !important;
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.65) !important;
+/* Dark Popover & Modal Dialogs (Settings, Prompt Preview, Restore, YouTube OAuth) */
+div[data-testid="stPopoverBody"],
+div[data-testid="stDialog"] div[role="dialog"],
+div[data-testid="stModal"] div[role="dialog"],
+div[data-baseweb="modal"] div[role="dialog"],
+div[data-baseweb="modal"] > div:last-child {
+    background-color: #201717 !important;
+    border: 1.5px solid rgba(255, 255, 255, 0.18) !important;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.85) !important;
     border-radius: 14px !important;
+    color: #fffefb !important;
+}
+
+div[data-testid="stDialog"] h1,
+div[data-testid="stDialog"] h2,
+div[data-testid="stDialog"] h3,
+div[data-testid="stDialog"] [data-testid="stHeadingWithActionElements"] {
+    color: #fffefb !important;
+}
+
+div[data-testid="stDialog"] button[aria-label="Close"],
+div[data-baseweb="modal"] button[aria-label="Close"],
+div[data-testid="stDialogCloseButton"] {
+    color: #c5c0b1 !important;
+    background: transparent !important;
+    border: none !important;
+}
+div[data-testid="stDialog"] button[aria-label="Close"]:hover,
+div[data-baseweb="modal"] button[aria-label="Close"]:hover {
+    color: #fffefb !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+}
+div[data-testid="stDialog"] button[aria-label="Close"] svg,
+div[data-baseweb="modal"] button[aria-label="Close"] svg {
+    fill: #c5c0b1 !important;
+    stroke: #c5c0b1 !important;
+}
+
+/* Dark Mode Tabs (Settings Dialog & Task Manager Status Tabs) */
+div[data-baseweb="tab-list"] {
+    background-color: transparent !important;
+    border-bottom: 1.5px solid rgba(255, 255, 255, 0.14) !important;
+    gap: 6px !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none !important;
+}
+div[data-baseweb="tab-list"]::-webkit-scrollbar {
+    display: none !important;
+}
+
+button[data-baseweb="tab"] {
+    background: transparent !important;
+    color: #c5c0b1 !important;
+    font-size: 13.5px !important;
+    font-weight: 500 !important;
+    padding: 8px 14px !important;
+    border: none !important;
+    transition: color 0.15s ease, background-color 0.15s ease !important;
+    white-space: nowrap !important;
+}
+button[data-baseweb="tab"] p {
+    color: #c5c0b1 !important;
+    font-weight: 500 !important;
+}
+
+button[data-baseweb="tab"]:hover {
+    color: #fffefb !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+}
+button[data-baseweb="tab"]:hover p {
+    color: #fffefb !important;
+}
+
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: #ff4f00 !important;
+    font-weight: 700 !important;
+}
+button[data-baseweb="tab"][aria-selected="true"] p {
+    color: #ff4f00 !important;
+    font-weight: 700 !important;
+}
+
+div[data-baseweb="tab-highlight"] {
+    background-color: #ff4f00 !important;
+    height: 2.5px !important;
+    border-radius: 2px !important;
+}
+div[data-baseweb="tab-border"] {
+    background-color: rgba(255, 255, 255, 0.14) !important;
+}
+
+/* Dark Mode Callout Alerts (st.info, st.warning, st.error, st.success) */
+div[data-testid="stAlert"] {
+    border-radius: 10px !important;
+    padding: 12px 16px !important;
+    background-color: #152436 !important;
+    border: 1px solid rgba(56, 189, 248, 0.35) !important;
+    color: #e0f2fe !important;
+}
+div[data-testid="stAlert"] [data-testid="stMarkdownContainer"] p,
+div[data-testid="stAlert"] [data-testid="stMarkdownContainer"] li,
+div[data-testid="stAlert"] [data-testid="stMarkdownContainer"] span {
+    color: #e0f2fe !important;
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+}
+div[data-testid="stAlert"] a {
+    color: #38bdf8 !important;
+    text-decoration: underline !important;
+    font-weight: 600 !important;
+}
+div[data-testid="stAlert"] strong,
+div[data-testid="stAlert"] b {
+    color: #ffffff !important;
+}
+div[data-testid="stAlert"] code {
+    background-color: rgba(0, 0, 0, 0.3) !important;
+    color: #7dd3fc !important;
+    padding: 1px 5px !important;
+    border-radius: 4px !important;
+}
+
+div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) {
+    background-color: #2b1f0c !important;
+    border: 1px solid rgba(245, 158, 11, 0.4) !important;
+    color: #fef3c7 !important;
+}
+div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) [data-testid="stMarkdownContainer"] p,
+div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) [data-testid="stMarkdownContainer"] li {
+    color: #fef3c7 !important;
+}
+
+div[data-testid="stAlert"]:has([data-testid="stAlertContentError"]) {
+    background-color: #321212 !important;
+    border: 1px solid rgba(239, 68, 68, 0.4) !important;
+    color: #fee2e2 !important;
+}
+div[data-testid="stAlert"]:has([data-testid="stAlertContentError"]) [data-testid="stMarkdownContainer"] p,
+div[data-testid="stAlert"]:has([data-testid="stAlertContentError"]) [data-testid="stMarkdownContainer"] li {
+    color: #fee2e2 !important;
+}
+
+div[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) {
+    background-color: #0d2818 !important;
+    border: 1px solid rgba(34, 197, 94, 0.4) !important;
+    color: #dcfce7 !important;
+}
+div[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) [data-testid="stMarkdownContainer"] p,
+div[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) [data-testid="stMarkdownContainer"] li {
+    color: #dcfce7 !important;
+}
+
+/* Dark Mode Dropdown Lists */
+div[data-baseweb="popover"],
+ul[role="listbox"] {
+    background-color: #201717 !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    border-radius: 10px !important;
+    color: #fffefb !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7) !important;
+}
+li[role="option"] {
+    background-color: transparent !important;
+    color: #fffefb !important;
+    font-size: 13.5px !important;
+}
+li[role="option"]:hover,
+li[role="option"][aria-selected="true"] {
+    background-color: rgba(255, 79, 0, 0.22) !important;
+    color: #fffefb !important;
+}
+
+div[data-testid="stPopoverBody"] {
     max-width: 96vw !important;
     width: max-content !important;
 }
@@ -1183,36 +1395,43 @@ if not is_embedded:
         f'.zapier-theme-btn {{ width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; text-decoration: none !important; background: {pill_bg}; border: {pill_border}; font-size: 14px; cursor: pointer; transition: all 0.15s ease; }}'
         f'.zapier-exit-btn {{ display: inline-flex; align-items: center; gap: 6px; padding: 7px 16px; border-radius: 10px; background: #ff4f00; color: #fffefb !important; font-size: 13px; font-weight: 600; text-decoration: none !important; box-shadow: 0 2px 10px rgba(255,79,0,0.3); white-space: nowrap; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1); }}'
         f'.zapier-exit-btn:hover {{ background: #e04500; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(255,79,0,0.45); }}'
+        f'.zapier-exit-label-short {{ display: none; }}'
+        f'.zapier-tmpl-short {{ display: none; }}'
         f'@media (max-width: 768px) {{'
-        f'.zapier-cmd-bar {{ display: flex !important; flex-direction: column !important; height: auto !important; padding: 8px 12px 6px 12px !important; margin: 0 !important; gap: 6px !important; }}'
+        f'.zapier-cmd-bar {{ display: flex !important; flex-direction: column !important; height: auto !important; padding: 6px 10px 5px 10px !important; margin: 0 !important; gap: 5px !important; }}'
         f'.zapier-cmd-header-row {{ display: flex !important; align-items: center !important; justify-content: space-between !important; width: 100% !important; }}'
         f'.zapier-cmd-left {{ display: flex !important; align-items: center !important; gap: 6px !important; }}'
-        f'.zapier-cmd-title {{ font-size: 16px !important; }}'
-        f'.zapier-cmd-icon {{ width: 26px !important; height: 26px !important; }}'
+        f'.zapier-cmd-title {{ font-size: 15.5px !important; }}'
+        f'.zapier-cmd-icon {{ width: 24px !important; height: 24px !important; border-radius: 6px !important; }}'
         f'.zapier-cmd-right {{ display: flex !important; align-items: center !important; gap: 6px !important; }}'
-        f'.zapier-theme-btn {{ width: 30px !important; height: 30px !important; font-size: 13px !important; }}'
-        f'.zapier-exit-btn {{ padding: 5px 12px !important; font-size: 12px !important; border-radius: 8px !important; }}'
-        f'.zapier-cmd-center {{ display: flex !important; width: 100% !important; box-sizing: border-box !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; scrollbar-width: none !important; background: {pill_bg} !important; border: {pill_border} !important; border-radius: 8px !important; padding: 3px !important; gap: 3px !important; justify-content: flex-start !important; }}'
+        f'.zapier-theme-btn {{ width: 28px !important; height: 28px !important; font-size: 12.5px !important; border-radius: 7px !important; }}'
+        f'.zapier-exit-btn {{ padding: 4px 10px !important; font-size: 11.5px !important; border-radius: 7px !important; gap: 4px !important; }}'
+        f'.zapier-exit-label-full {{ display: none !important; }}'
+        f'.zapier-exit-label-short {{ display: inline !important; }}'
+        f'.zapier-tmpl-full {{ display: none !important; }}'
+        f'.zapier-tmpl-short {{ display: inline !important; }}'
+        f'.zapier-cmd-center {{ display: flex !important; width: 100% !important; box-sizing: border-box !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; scrollbar-width: none !important; background: {pill_bg} !important; border: {pill_border} !important; border-radius: 8px !important; padding: 2px !important; gap: 2px !important; justify-content: space-between !important; }}'
         f'.zapier-cmd-center::-webkit-scrollbar {{ display: none !important; }}'
-        f'.zapier-cmd-pill, .zapier-cmd-pill-active {{ padding: 4px 10px !important; font-size: 12px !important; flex-shrink: 0 !important; white-space: nowrap !important; }}'
+        f'.zapier-cmd-pill, .zapier-cmd-pill-active {{ padding: 4px 7px !important; font-size: 11px !important; flex: 1 1 auto !important; text-align: center !important; justify-content: center !important; white-space: nowrap !important; border-radius: 6px !important; }}'
+        f'.zapier-pill-badge {{ font-size: 9px !important; padding: 1px 4px !important; }}'
         f'}}'
         f'</style>'
         f'<div class="zapier-cmd-bar">'
         f'<div class="zapier-cmd-header-row">'
         f'<div class="zapier-cmd-left">'
         f'<a href="https://bangai.netlify.app/#/dashboard" target="_top" class="zapier-cmd-brand">'
-        f'<div class="zapier-cmd-icon"><span style="font-size:14px;line-height:1;color:#fffefb;">⚡</span></div>'
+        f'<div class="zapier-cmd-icon"><span style="font-size:13px;line-height:1;color:#fffefb;">⚡</span></div>'
         f'<span class="zapier-cmd-title">Bang AI</span>'
         f'</a>'
         f'</div>'
         f'<div class="zapier-cmd-right">'
         f'<a href="{theme_toggle_url}" title="{toggle_theme_title}" class="zapier-theme-btn">{toggle_theme_icon}</a>'
-        f'<a href="https://bangai.netlify.app/#/basic-templates" target="_top" class="zapier-exit-btn"><span>Exit Full Window</span> <span>↗</span></a>'
+        f'<a href="https://bangai.netlify.app/#/basic-templates" target="_top" class="zapier-exit-btn"><span class="zapier-exit-label-full">Exit Full Window</span><span class="zapier-exit-label-short">Exit</span> <span>↗</span></a>'
         f'</div>'
         f'</div>'
         f'<div class="zapier-cmd-center">'
         f'<a href="https://bangai.netlify.app/#/dashboard" target="_top" class="zapier-cmd-pill">Dashboard</a>'
-        f'<a href="https://bangai.netlify.app/#/templates" target="_top" class="zapier-cmd-pill"><span>AI Templates</span> <span class="zapier-pill-badge">75S</span></a>'
+        f'<a href="https://bangai.netlify.app/#/templates" target="_top" class="zapier-cmd-pill"><span class="zapier-tmpl-full">AI Templates</span><span class="zapier-tmpl-short">Templates</span> <span class="zapier-pill-badge">75S</span></a>'
         f'<a href="https://bangai.netlify.app/#/basic-templates" target="_top" class="zapier-cmd-pill-active">Stock Studio</a>'
         f'<a href="https://bangai.netlify.app/#/chat" target="_top" class="zapier-cmd-pill"><span>Chat</span> <span class="zapier-pill-badge">4.0</span></a>'
         f'</div>'
@@ -3340,7 +3559,7 @@ def _render_task_manager_entry():
     )
     popover_width = 1450 if has_preview else 950
 
-    with st.container(key="task_manager_entry", width=popover_width):
+    with st.container(key="task_manager_entry"):
         with st.popover(
             _task_manager_label(processing_task_count),
             width=popover_width,
