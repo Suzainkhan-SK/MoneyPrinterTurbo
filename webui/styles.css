@@ -47,9 +47,16 @@ section[data-testid="stMain"] {
     margin-top: 0 !important;
 }
 
-div[data-testid="stMainBlockContainer"],
-.block-container {
+/* If fixed navbar is present in DOM, add top clearance; if embedded (no navbar), use 2px */
+div[data-testid="stMainBlockContainer"]:has(.zapier-cmd-bar),
+.block-container:has(.zapier-cmd-bar) {
     padding-top: 64px !important;
+    margin-top: 0 !important;
+}
+
+div[data-testid="stMainBlockContainer"]:not(:has(.zapier-cmd-bar)),
+.block-container:not(:has(.zapier-cmd-bar)) {
+    padding-top: 2px !important;
     margin-top: 0 !important;
 }
 
@@ -59,9 +66,13 @@ div[class*="st-key-top_bar"] {
 }
 
 @media (max-width: 768px) {
-    div[data-testid="stMainBlockContainer"],
-    .block-container {
+    div[data-testid="stMainBlockContainer"]:has(.zapier-cmd-bar),
+    .block-container:has(.zapier-cmd-bar) {
         padding-top: 74px !important;
+    }
+    div[data-testid="stMainBlockContainer"]:not(:has(.zapier-cmd-bar)),
+    .block-container:not(:has(.zapier-cmd-bar)) {
+        padding-top: 2px !important;
     }
     div[class*="st-key-top_bar"] {
         margin-top: 0 !important;
@@ -961,6 +972,22 @@ div[class*="st-key-top_studio_switcher"] {
     .block-container {
         padding-left: 0.75rem !important;
         padding-right: 0.75rem !important;
+    }
+
+    /* 5. Mobile Dialog & Popover responsive sizing across React-Aria, BaseWeb, Emotion */
+    div[data-testid="stDialog"] > div,
+    div.stDialog > div,
+    .react-aria-Modal,
+    div[class*="e1mymz5c1"],
+    div[data-baseweb="modal"] div[role="dialog"] {
+        max-width: 95vw !important;
+        width: 95vw !important;
+        max-height: 88vh !important;
+        margin: auto !important;
+        padding: 14px 10px !important;
+        box-sizing: border-box !important;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch !important;
     }
 }
 

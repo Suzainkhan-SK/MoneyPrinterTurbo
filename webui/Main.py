@@ -722,7 +722,13 @@ div[class*="st-key-open_voice_settings_btn"] button:active {
 
 /* Popover & Modal Dialogs (Light) */
 div[data-testid="stPopoverBody"],
+div[data-testid="stDialog"] > div,
+div.stDialog > div,
+.react-aria-Modal,
+div[class*="e1mymz5c1"],
+div[data-testid="stDialog"] [class*="e1mymz5c1"],
 div[data-testid="stDialog"] div[role="dialog"],
+div[data-testid="stDialog"] [role="dialog"],
 div[data-testid="stModal"] div[role="dialog"],
 div[data-baseweb="modal"] div[role="dialog"],
 div[data-baseweb="modal"] > div:last-child {
@@ -1148,7 +1154,14 @@ div[class*="st-key-open_voice_settings_btn"] button:hover {
 
 /* Dark Popover & Modal Dialogs (Settings, Prompt Preview, Restore, YouTube OAuth) */
 div[data-testid="stPopoverBody"],
+div[data-testid="stDialog"] > div,
+div.stDialog > div,
+.react-aria-Modal,
+div[class*="e1mymz5c1"],
+div[data-testid="stDialog"] [class*="e1mymz5c1"],
 div[data-testid="stDialog"] div[role="dialog"],
+div[data-testid="stDialog"] [role="dialog"],
+div[data-testid="stDialog"] section,
 div[data-testid="stModal"] div[role="dialog"],
 div[data-baseweb="modal"] div[role="dialog"],
 div[data-baseweb="modal"] > div:last-child {
@@ -1159,14 +1172,56 @@ div[data-baseweb="modal"] > div:last-child {
     color: #fffefb !important;
 }
 
+/* Modal Backdrop */
+div[data-testid="stDialog"],
+div.stDialog,
+.react-aria-ModalOverlay,
+div[class*="e1mymz5c0"] {
+    background-color: rgba(0, 0, 0, 0.75) !important;
+    backdrop-filter: blur(4px) !important;
+    -webkit-backdrop-filter: blur(4px) !important;
+}
+
 div[data-testid="stDialog"] h1,
 div[data-testid="stDialog"] h2,
 div[data-testid="stDialog"] h3,
-div[data-testid="stDialog"] [data-testid="stHeadingWithActionElements"] {
+div[data-testid="stDialog"] h4,
+div[data-testid="stDialog"] [data-testid="stHeadingWithActionElements"],
+.react-aria-Modal h1,
+.react-aria-Modal h2,
+.react-aria-Modal h3,
+[class*="e1mymz5c1"] h1,
+[class*="e1mymz5c1"] h2,
+[class*="e1mymz5c1"] h3 {
     color: #fffefb !important;
 }
 
+div[data-testid="stDialog"] p,
+div[data-testid="stDialog"] span,
+div[data-testid="stDialog"] label,
+.react-aria-Modal p,
+.react-aria-Modal span,
+.react-aria-Modal label,
+[class*="e1mymz5c1"] p,
+[class*="e1mymz5c1"] span,
+[class*="e1mymz5c1"] label {
+    color: #fffefb !important;
+}
+
+div[data-testid="stDialog"] [data-testid="stWidgetLabel"] p,
+div[data-testid="stDialog"] [data-testid="stWidgetLabel"] span,
+.react-aria-Modal [data-testid="stWidgetLabel"] p,
+.react-aria-Modal [data-testid="stWidgetLabel"] span {
+    color: #fffefb !important;
+    font-weight: 600 !important;
+    font-size: 13.5px !important;
+}
+
+/* Close Button across React-Aria, BaseWeb, Emotion */
 div[data-testid="stDialog"] button[aria-label="Close"],
+.react-aria-Modal button[aria-label="Close"],
+[class*="e1mymz5c1"] button[aria-label="Close"],
+[class*="e1mymz5c3"],
 div[data-baseweb="modal"] button[aria-label="Close"],
 div[data-testid="stDialogCloseButton"] {
     color: #c5c0b1 !important;
@@ -1174,14 +1229,62 @@ div[data-testid="stDialogCloseButton"] {
     border: none !important;
 }
 div[data-testid="stDialog"] button[aria-label="Close"]:hover,
+.react-aria-Modal button[aria-label="Close"]:hover,
+[class*="e1mymz5c3"]:hover,
 div[data-baseweb="modal"] button[aria-label="Close"]:hover {
     color: #fffefb !important;
     background: rgba(255, 255, 255, 0.1) !important;
 }
 div[data-testid="stDialog"] button[aria-label="Close"] svg,
+.react-aria-Modal button[aria-label="Close"] svg,
+[class*="e1mymz5c3"] svg,
 div[data-baseweb="modal"] button[aria-label="Close"] svg {
     fill: #c5c0b1 !important;
     stroke: #c5c0b1 !important;
+    color: #c5c0b1 !important;
+}
+div[data-testid="stDialog"] button[aria-label="Close"] svg path,
+.react-aria-Modal button[aria-label="Close"] svg path,
+[class*="e1mymz5c3"] svg path {
+    stroke: #c5c0b1 !important;
+}
+
+/* Dropdowns & Inputs inside Modal */
+div[data-testid="stDialog"] div[data-baseweb="select"] > div:first-child,
+.react-aria-Modal div[data-baseweb="select"] > div:first-child,
+[class*="e1mymz5c1"] div[data-baseweb="select"] > div:first-child {
+    background-color: #1a1313 !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 8px !important;
+}
+div[data-testid="stDialog"] div[data-baseweb="select"] [role="combobox"],
+.react-aria-Modal div[data-baseweb="select"] [role="combobox"],
+[class*="e1mymz5c1"] div[data-baseweb="select"] [role="combobox"] {
+    color: #fffefb !important;
+}
+div[data-testid="stDialog"] div[data-baseweb="select"] svg,
+.react-aria-Modal div[data-baseweb="select"] svg {
+    fill: #c5c0b1 !important;
+    color: #c5c0b1 !important;
+}
+div[data-testid="stDialog"] input,
+div[data-testid="stDialog"] textarea,
+.react-aria-Modal input,
+.react-aria-Modal textarea,
+[class*="e1mymz5c1"] input,
+[class*="e1mymz5c1"] textarea {
+    background-color: #1a1313 !important;
+    color: #fffefb !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 8px !important;
+}
+div[data-testid="stDialog"] button[kind="secondary"],
+div[data-testid="stDialog"] button[data-testid="stBaseButton-secondary"],
+.react-aria-Modal button[kind="secondary"],
+.react-aria-Modal button[data-testid="stBaseButton-secondary"] {
+    background-color: #251c1c !important;
+    color: #fffefb !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
 }
 
 /* Dark Mode Tabs (Settings Dialog & Task Manager Status Tabs) */
@@ -1438,6 +1541,46 @@ if not is_embedded:
         f'</div>'
     )
     st.markdown(navbar_markup, unsafe_allow_html=True)
+else:
+    embedded_style = (
+        "<style>"
+        "div[data-testid='stMainBlockContainer'],"
+        ".block-container {"
+        "    padding-top: 2px !important;"
+        "    margin-top: 0px !important;"
+        "}"
+        "div[class*='st-key-top_bar'] {"
+        "    margin-top: 0px !important;"
+        "    padding-top: 0px !important;"
+        "}"
+        ".mpt-brand {"
+        "    margin-top: 0px !important;"
+        "    padding-top: 0px !important;"
+        "    margin-bottom: 2px !important;"
+        "}"
+        "div[data-testid='stMainBlockContainer'] > div[data-testid='stVerticalBlock'] {"
+        "    gap: 0.35rem !important;"
+        "}"
+        "@media (max-width: 768px) {"
+        "    div[data-testid='stMainBlockContainer'],"
+        "    .block-container {"
+        "        padding-top: 2px !important;"
+        "        margin-top: 0px !important;"
+        "    }"
+        "    div[class*='st-key-top_bar'] {"
+        "        margin-top: 0px !important;"
+        "        padding-top: 0px !important;"
+        "        margin-bottom: 2px !important;"
+        "    }"
+        "    .mpt-brand {"
+        "        margin-top: 0px !important;"
+        "        padding-top: 0px !important;"
+        "        margin-bottom: 2px !important;"
+        "    }"
+        "}"
+        "</style>"
+    )
+    st.markdown(embedded_style, unsafe_allow_html=True)
 
 # 定义资源目录
 font_dir = os.path.join(root_dir, "resource", "fonts")
