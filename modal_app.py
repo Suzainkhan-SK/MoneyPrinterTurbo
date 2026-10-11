@@ -156,7 +156,7 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
     utils.set_current_user_id(user_id)
     config.switch_user_config(user_id)
     
-    task_dir = utils.task_dir(task_id, create=True)
+    task_dir = utils.task_dir(task_id)
     
     state_file = f"{task_dir}/state.json"
     with open(state_file, "w", encoding="utf-8") as f:

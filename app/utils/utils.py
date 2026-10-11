@@ -126,7 +126,7 @@ def resource_dir(sub_dir: str = ""):
     return d
 
 
-def task_dir(sub_dir: str = ""):
+def task_dir(sub_dir: str = "", create: bool = True, **kwargs):
     d = os.path.join(storage_dir(), "tasks")
     if sub_dir:
         d = os.path.join(d, sub_dir)
