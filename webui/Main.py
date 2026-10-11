@@ -5693,6 +5693,9 @@ def _sync_json2video_api_key_input(widget_key="json2video_api_key_input"):
 def _render_voice_api_settings(panel):
     """渲染语音与音频 API 密钥设置（json2video ElevenLabs Premium、ElevenLabs 原生、Azure 语音等）。"""
     with panel:
+        if config.bangai_credits.get("use_bang_voice_credits", False) or config.bangai_credits.get("use_bang_j2v_credits", False):
+            st.info("✨ **Bang API Credits Active for Voice & Audio APIs.** Neural TTS and json2video will automatically utilize Bang AI's managed keys. Your custom keys below are preserved as backup.")
+
         with st.container(border=True):
             st.markdown(f"#### {tr('ElevenLabs Premium (json2video)')}")
             st.caption(
@@ -5817,6 +5820,7 @@ def _render_settings_dialog():
         # 不再有用户可见意义，统一迁移为 false，避免旧配置影响后续版本。
         _set_runtime_config("app", "hide_config", False)
         settings_tab_labels = [
+            "🌐 Global Settings (Bang API Credits)",
             tr("LLM Settings Tab"),
             tr("Material API Tab"),
             tr("Voice & Audio API Tab"),
@@ -5826,6 +5830,7 @@ def _render_settings_dialog():
             tr("Cache Management Tab"),
         ]
         settings_tab_targets = {
+            "global": "🌐 Global Settings (Bang API Credits)",
             "llm": tr("LLM Settings Tab"),
             "material": tr("Material API Tab"),
             "voice": tr("Voice & Audio API Tab"),
@@ -5838,6 +5843,7 @@ def _render_settings_dialog():
             st.session_state[settings_tabs_key] = settings_tab_targets[target_tab]
 
         (
+            global_config_panel,
             middle_config_panel,
             right_config_panel,
             voice_config_panel,
@@ -5850,6 +5856,120 @@ def _render_settings_dialog():
             key=settings_tabs_key,
             on_change="rerun",
         )
+
+        with global_config_panel:
+            st.markdown(f"### 🌐 Global Settings — Bang API Credits")
+            st.markdown(
+                """
+                <div style="background: rgba(6, 182, 212, 0.08); border: 1px solid rgba(6, 182, 212, 0.25); border-radius: 10px; padding: 14px 18px; margin-bottom: 20px;">
+                    <div style="font-weight: 700; color: #06b6d4; font-size: 14px; margin-bottom: 4px;">
+                        ⚡ Zero-Downtime Multi-Key Cloud Pool vs Bring Your Own Key (BYOK)
+                    </div>
+                    <div style="font-size: 12.5px; opacity: 0.9; line-height: 1.5;">
+                        Toggle on <strong>Bang API Credits</strong> for any service below to utilize our website's high-speed, load-balanced system API keys with automatic rate-limit rotation and zero downtime. Leave toggled off to use your own personal API key.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            from app.services.key_rotator import key_rotator
+            pool_stats = key_rotator.get_pool_status()
+
+            # 1. LLM API Credits Card
+            st.markdown("#### 🧠 1. AI LLM Script & Storyboard Engine")
+            st.caption("Writes high-retention video scripts and visual B-roll keywords using Bang AI's rotated LLM pool.")
+            col_l1, col_l2 = st.columns([2.5, 1])
+            with col_l1:
+                cur_llm_credit = bool(config.bangai_credits.get("use_bang_llm_credits", False))
+                use_llm_credit = st.checkbox(
+                    "Enable Bang API Credits for LLM (Gemini / OpenAI / DeepSeek)",
+                    value=cur_llm_credit,
+                    key="settings_bang_llm_credits_checkbox",
+                    help="When enabled, script generation uses Bang AI's managed cloud API keys instead of your personal key.",
+                )
+                if use_llm_credit != cur_llm_credit:
+                    _set_runtime_config("bangai_credits", "use_bang_llm_credits", use_llm_credit)
+            with col_l2:
+                llm_keys_count = pool_stats.get("llm", {}).get("total", 0) + pool_stats.get("gemini", {}).get("total", 0) + pool_stats.get("openai", {}).get("total", 0)
+                if cur_llm_credit:
+                    st.success(f"● Bang Credits Active ({llm_keys_count} keys)")
+                else:
+                    st.info("○ Personal Key (BYOK)")
+
+            st.divider()
+
+            # 2. JSON2Video API Credits Card
+            st.markdown("#### ⚡ 2. JSON2Video Cloud Render & Voice Engine")
+            st.caption("Executes cloud composition and ElevenLabs premium voiceover via Bang AI's rotated JSON2Video keys.")
+            col_j1, col_j2 = st.columns([2.5, 1])
+            with col_j1:
+                cur_j2v_credit = bool(config.bangai_credits.get("use_bang_j2v_credits", False))
+                use_j2v_credit = st.checkbox(
+                    "Enable Bang API Credits for JSON2Video API",
+                    value=cur_j2v_credit,
+                    key="settings_bang_j2v_credits_checkbox",
+                    help="When enabled, JSON2Video rendering and voices will draw from our managed multi-key cluster.",
+                )
+                if use_j2v_credit != cur_j2v_credit:
+                    _set_runtime_config("bangai_credits", "use_bang_j2v_credits", use_j2v_credit)
+            with col_j2:
+                j2v_keys_count = pool_stats.get("json2video", {}).get("total", 0)
+                if cur_j2v_credit:
+                    st.success(f"● Bang Credits Active ({j2v_keys_count} keys)")
+                else:
+                    st.info("○ Personal Key (BYOK)")
+
+            st.divider()
+
+            # 3. Stock Footage API Credits Card
+            st.markdown("#### 🎬 3. Stock Footage & Media Library (Pexels / Pixabay)")
+            st.caption("Fetches HD vertical video clips and stock photography via Bang AI's load-balanced media keys.")
+            col_m1, col_m2 = st.columns([2.5, 1])
+            with col_m1:
+                cur_mat_credit = bool(config.bangai_credits.get("use_bang_material_credits", False))
+                use_mat_credit = st.checkbox(
+                    "Enable Bang API Credits for Stock Footage API",
+                    value=cur_mat_credit,
+                    key="settings_bang_material_credits_checkbox",
+                    help="When enabled, Pexels and Pixabay video queries will use Bang AI's rotated key pool.",
+                )
+                if use_mat_credit != cur_mat_credit:
+                    _set_runtime_config("bangai_credits", "use_bang_material_credits", use_mat_credit)
+            with col_m2:
+                mat_keys_count = pool_stats.get("pexels", {}).get("total", 0) + pool_stats.get("pixabay", {}).get("total", 0) + pool_stats.get("stock_footage", {}).get("total", 0)
+                if cur_mat_credit:
+                    st.success(f"● Bang Credits Active ({mat_keys_count} keys)")
+                else:
+                    st.info("○ Personal Key (BYOK)")
+
+            st.divider()
+
+            # 4. Voice & TTS API Credits Card
+            st.markdown("#### 🎙️ 4. Neural Voice & TTS Audio Engine (Azure / ElevenLabs)")
+            st.caption("Generates ultra-realistic voices via Bang AI's managed speech and audio API pool.")
+            col_v1, col_v2 = st.columns([2.5, 1])
+            with col_v1:
+                cur_vox_credit = bool(config.bangai_credits.get("use_bang_voice_credits", False))
+                use_vox_credit = st.checkbox(
+                    "Enable Bang API Credits for Voice & TTS API",
+                    value=cur_vox_credit,
+                    key="settings_bang_voice_credits_checkbox",
+                    help="When enabled, neural speech synthesis uses Bang AI's managed voice key pool.",
+                )
+                if use_vox_credit != cur_vox_credit:
+                    _set_runtime_config("bangai_credits", "use_bang_voice_credits", use_vox_credit)
+            with col_v2:
+                vox_keys_count = pool_stats.get("azure_speech", {}).get("total", 0) + pool_stats.get("elevenlabs", {}).get("total", 0) + pool_stats.get("voice_tts", {}).get("total", 0)
+                if cur_vox_credit:
+                    st.success(f"● Bang Credits Active ({vox_keys_count} keys)")
+                else:
+                    st.info("○ Personal Key (BYOK)")
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🔄 Refresh System Key Status & Cooldowns", key="refresh_bang_credits_btn"):
+                key_rotator.reload_keys()
+                st.rerun()
 
         with publish_config_panel:
             st.markdown(f"### 🎬 {tr('BangAI Google OAuth YouTube Publishing')}")
@@ -6066,6 +6186,8 @@ def _render_settings_dialog():
         # 中间面板 - LLM 设置
 
         with middle_config_panel:
+            if config.bangai_credits.get("use_bang_llm_credits", False):
+                st.info("✨ **Bang API Credits Active for LLM.** Script generation will automatically use Bang AI's load-balanced key pool. Your custom API key below is preserved as backup.")
             # 下拉顺序、默认 label 和稳定 provider id 全部来自 Registry；locale
             # 只覆盖展示文案，不再让 Main.py 维护第二份 Provider 列表。
             llm_provider_ids = [
@@ -6351,6 +6473,8 @@ def _render_settings_dialog():
 
         # 右侧面板 - API 密钥设置
         with right_config_panel:
+            if config.bangai_credits.get("use_bang_material_credits", False):
+                st.info("✨ **Bang API Credits Active for Stock Footage.** Media search will automatically use Bang AI's load-balanced Pexels/Pixabay keys. Your personal keys below are preserved as backup.")
             # 素材 Provider 按「搜索库存素材 / AI 生成视频 / AI 生成图片」
             # 分组，避免随着 Provider 增多后所有字段在一个长列表中混排。
             # 分组只调整展示层级，不改动已有配置键，旧用户升级后

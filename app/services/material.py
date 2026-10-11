@@ -173,6 +173,15 @@ def _get_tls_verify() -> bool:
 
 
 def get_api_key(cfg_key: str):
+    use_bang_material = bool(config.bangai_credits.get("use_bang_material_credits", False))
+    if use_bang_material:
+        from app.services.key_rotator import key_rotator
+        provider_name = "pexels" if "pexels" in cfg_key else ("pixabay" if "pixabay" in cfg_key else "stock_footage")
+        rot_key, rot_label = key_rotator.get_key("stock_footage", provider=provider_name)
+        if rot_key:
+            logger.info(f"[Material] Utilizing Bang API Credits rotated key ({rot_label}) for '{provider_name}'")
+            return rot_key
+
     api_keys = config.app.get(cfg_key)
     if not api_keys:
         raise ValueError(

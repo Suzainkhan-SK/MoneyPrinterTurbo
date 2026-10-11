@@ -510,6 +510,16 @@ def get_elevenlabs_api_key() -> str:
     支持 ``ELEVENLABS_API_KEY``，TTS 必须使用相同规则，否则仅通过容器环境
     变量部署时，音色列表可正常加载，真正合成语音却会误报未配置 Key。
     """
+    use_bang_voice = bool(config.bangai_credits.get("use_bang_voice_credits", False))
+    if use_bang_voice:
+        try:
+            from app.services.key_rotator import key_rotator
+            rot_key, rot_label = key_rotator.get_key("voice_tts", provider="elevenlabs")
+            if rot_key:
+                logger.info(f"[Voice] Utilizing Bang API Credits rotated key ({rot_label}) for ElevenLabs")
+                return rot_key
+        except Exception:
+            pass
     configured_key = str(config.elevenlabs.get("api_key", "") or "").strip()
     return configured_key or os.getenv("ELEVENLABS_API_KEY", "").strip()
 
@@ -1654,8 +1664,22 @@ def azure_tts_v2(
                 sub_maker.offset.append((offset, offset + duration))
 
             # Creates an instance of a speech config with specified subscription key and service region.
-            speech_key = config.azure.get("speech_key", "")
-            service_region = config.azure.get("speech_region", "")
+            use_bang_voice = bool(config.bangai_credits.get("use_bang_voice_credits", False))
+            speech_key = ""
+            service_region = ""
+            if use_bang_voice:
+                try:
+                    from app.services.key_rotator import key_rotator
+                    rot_key, rot_label = key_rotator.get_key("voice_tts", provider="azure_speech")
+                    if rot_key:
+                        speech_key = rot_key
+                        service_region = config.azure.get("speech_region", "eastus") or "eastus"
+                        logger.info(f"[Voice] Utilizing Bang API Credits rotated key ({rot_label}) for Azure Speech")
+                except Exception:
+                    pass
+            if not speech_key:
+                speech_key = config.azure.get("speech_key", "")
+                service_region = config.azure.get("speech_region", "")
             if not speech_key or not service_region:
                 logger.error("Azure speech key or region is not set")
                 return None
@@ -2271,27 +2295,75 @@ def _submit_and_poll_json2video_movie(
         ],
     }
 
-    clean_primary_key = str(api_key or config.json2video.get("api_key", "") or "").strip()
-    if not clean_primary_key:
-        raise ValueError("json2video API key is required. Please provide your json2video API key in Settings -> Voice & Audio APIs or on the generation panel.")
+    use_bang_j2v = bool(config.bangai_credits.get("use_bang_j2v_credits", False))
+    max_j2v_attempts = 5 if use_bang_j2v else 1
+    project_id = None
+    winning_key = None
 
-    headers = {
-        "x-api-key": clean_primary_key,
-        "Content-Type": "application/json",
-    }
-    logger.info(f"Submitting json2video {part_label} voiceover (voice_id: {voice_id}, text length: {len(text)})")
-    res = requests.post(url, json=payload, headers=headers, timeout=30)
-    if res.status_code == 200:
-        data = res.json()
-        pid = data.get("project") or data.get("jobId")
-        if not pid:
-            raise RuntimeError(f"json2video failed to return project ID: {data}")
-        project_id = pid
-        winning_key = clean_primary_key
-    else:
-        err_msg = f"json2video API error (HTTP {res.status_code}): {res.text[:300]}"
-        logger.error(err_msg)
-        raise RuntimeError(err_msg)
+    for attempt in range(max_j2v_attempts):
+        clean_primary_key = ""
+        if use_bang_j2v:
+            try:
+                from app.services.key_rotator import key_rotator
+                rot_key, rot_label = key_rotator.get_key("json2video")
+                if rot_key:
+                    clean_primary_key = rot_key
+                    logger.info(f"[Voice] Utilizing Bang API Credits rotated key ({rot_label}) for json2video (attempt {attempt + 1})")
+            except Exception:
+                pass
+
+        if not clean_primary_key:
+            clean_primary_key = str(api_key or config.json2video.get("api_key", "") or "").strip()
+
+        if not clean_primary_key:
+            raise ValueError("json2video API key is required. Please provide your json2video API key in Settings -> Voice & Audio APIs or enable Bang API Credits in Global Settings.")
+
+        headers = {
+            "x-api-key": clean_primary_key,
+            "Content-Type": "application/json",
+        }
+        logger.info(f"Submitting json2video {part_label} voiceover (voice_id: {voice_id}, text length: {len(text)})")
+        try:
+            res = requests.post(url, json=payload, headers=headers, timeout=30)
+            if res.status_code == 200:
+                data = res.json()
+                pid = data.get("project") or data.get("jobId")
+                if not pid:
+                    raise RuntimeError(f"json2video failed to return project ID: {data}")
+                project_id = pid
+                winning_key = clean_primary_key
+                if use_bang_j2v:
+                    try:
+                        from app.services.key_rotator import key_rotator
+                        key_rotator.report_success("json2video", clean_primary_key)
+                    except Exception:
+                        pass
+                break
+            else:
+                err_msg = f"json2video API error (HTTP {res.status_code}): {res.text[:300]}"
+                logger.error(err_msg)
+                if use_bang_j2v:
+                    try:
+                        from app.services.key_rotator import key_rotator
+                        if key_rotator.is_exhaustion_error(res.text, res.status_code):
+                            logger.warning(f"[Voice] json2video key failed ({res.status_code}), rotating to backup key...")
+                            key_rotator.report_failure("json2video", clean_primary_key, res.status_code, res.text)
+                            if attempt < max_j2v_attempts - 1:
+                                continue
+                    except Exception:
+                        pass
+                raise RuntimeError(err_msg)
+        except Exception as exc:
+            if use_bang_j2v and clean_primary_key:
+                try:
+                    from app.services.key_rotator import key_rotator
+                    if key_rotator.is_exhaustion_error(exc):
+                        key_rotator.report_failure("json2video", clean_primary_key, error_text=str(exc))
+                        if attempt < max_j2v_attempts - 1:
+                            continue
+                except Exception:
+                    pass
+            raise
 
     logger.info(f"json2video {part_label} submitted, project: {project_id}. Polling for completion...")
 

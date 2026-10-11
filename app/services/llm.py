@@ -254,12 +254,11 @@ def _extract_qwen_generation_text(response) -> str:
     return _normalize_text_response(text, "qwen")
 
 
-def _generate_response(prompt: str, app_config=None) -> str:
+def _execute_llm_request_inner(prompt: str, runtime_app_config, forced_api_key: str = None) -> str:
     try:
         # WebUI 在视频生成期间允许用户准备下一条文案。调用方可以传入提交瞬间
         # 的配置快照，确保模型请求重试期间不会因为后台任务结束并应用新配置，
         # 而切换到另一个 Provider、Base URL 或模型。
-        runtime_app_config = app_config if app_config is not None else config.app
         llm_provider = str(
             runtime_app_config.get("llm_provider", DEFAULT_LLM_PROVIDER_ID)
         ).lower()
@@ -268,7 +267,7 @@ def _generate_response(prompt: str, app_config=None) -> str:
             raise ValueError(f"{llm_provider}: unsupported llm provider")
 
         logger.info(f"llm provider: {llm_provider}")
-        api_key = runtime_app_config.get(provider.config_key("api_key"), "")
+        api_key = forced_api_key if forced_api_key else runtime_app_config.get(provider.config_key("api_key"), "")
         configured_model = runtime_app_config.get(provider.config_key("model_name"), "")
         model_name = provider.resolve_model_name(configured_model)
         if configured_model and model_name != configured_model:
@@ -637,7 +636,43 @@ def _generate_response(prompt: str, app_config=None) -> str:
             )
 
     except Exception as e:
-        return f"Error: {_sanitize_error_message(e)}"
+        raise
+
+
+def _generate_response(prompt: str, app_config=None) -> str:
+    from app.services.key_rotator import key_rotator
+    runtime_app_config = app_config if app_config is not None else config.app
+    use_bang_credits = bool(config.bangai_credits.get("use_bang_llm_credits", False))
+    llm_provider = str(
+        runtime_app_config.get("llm_provider", DEFAULT_LLM_PROVIDER_ID)
+    ).lower()
+
+    if not use_bang_credits:
+        try:
+            return _execute_llm_request_inner(prompt, runtime_app_config)
+        except Exception as e:
+            return f"Error: {_sanitize_error_message(e)}"
+
+    max_attempts = 5
+    last_err_msg = ""
+    for attempt in range(max_attempts):
+        rot_key, rot_label = key_rotator.get_key("llm", provider=llm_provider)
+        try:
+            if rot_key:
+                logger.info(f"[LLM] Using Bang API Credits ({rot_label}) for '{llm_provider}' (attempt {attempt + 1})")
+            res = _execute_llm_request_inner(prompt, runtime_app_config, forced_api_key=rot_key)
+            if rot_key:
+                key_rotator.report_success("llm", rot_key)
+            return res
+        except Exception as e:
+            last_err_msg = f"Error: {_sanitize_error_message(e)}"
+            if rot_key and key_rotator.is_exhaustion_error(e):
+                logger.warning(f"[LLM] Key exhausted/rate-limited for '{llm_provider}', reporting to KeyRotator and rotating: {e}")
+                key_rotator.report_failure("llm", rot_key, error_text=str(e))
+                if attempt < max_attempts - 1:
+                    continue
+            return last_err_msg
+    return last_err_msg or "Error: All keys in pool exhausted"
 
 
 def test_connection() -> tuple[bool, str, float]:

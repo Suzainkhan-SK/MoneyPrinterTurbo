@@ -209,6 +209,39 @@ def serve():
     from app.asgi import app as fastapi_app
     
     bangai_router = APIRouter(prefix="/api/bangai")
+
+    @bangai_router.post("/system-keys")
+    async def bangai_save_system_keys(request: Request):
+        try:
+            body = await request.json()
+            keys_data = body.get("keys", body)
+            storage_path = "/root/storage/system_api_keys.json"
+            os.makedirs("/root/storage", exist_ok=True)
+            with open(storage_path, "w", encoding="utf-8") as f:
+                json.dump(keys_data, f, indent=2)
+            volume.commit()
+            try:
+                from app.services.key_rotator import key_rotator
+                key_rotator.reload_keys()
+            except Exception as re:
+                logger.debug(f"key_rotator reload note: {re}")
+            logger.success(f"Modal Cluster: Successfully synchronized system API keys ({len(keys_data)} pools)")
+            return {"status": 200, "message": "System keys synchronized successfully", "pools": list(keys_data.keys())}
+        except Exception as e:
+            logger.error(f"Failed to synchronize system keys: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @bangai_router.get("/system-keys")
+    async def bangai_get_system_keys():
+        volume.reload()
+        storage_path = "/root/storage/system_api_keys.json"
+        if os.path.exists(storage_path):
+            try:
+                with open(storage_path, "r", encoding="utf-8") as f:
+                    return {"status": 200, "data": json.load(f)}
+            except Exception:
+                pass
+        return {"status": 200, "data": {}}
     
     @bangai_router.post("/generate")
     async def bangai_generate(request: Request):

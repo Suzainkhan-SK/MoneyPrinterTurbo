@@ -810,6 +810,12 @@ def switch_user_config(user_id: str):
                         "default_privacy_status": "public",
                         "made_for_kids": False,
                     })),
+                    "bangai_credits": _SynchronizedConfig(new_cfg.get("bangai_credits", {
+                        "use_bang_llm_credits": False,
+                        "use_bang_j2v_credits": False,
+                        "use_bang_material_credits": False,
+                        "use_bang_voice_credits": False,
+                    })),
                 }
 
                 _user_registry[clean_uid] = {
@@ -861,6 +867,7 @@ def save_config(user_id: str | None = None):
             config_to_save["json2video"] = dict(json2video)
             config_to_save["ui"] = dict(ui)
             config_to_save["youtube_oauth"] = dict(youtube_oauth)
+            config_to_save["bangai_credits"] = dict(bangai_credits)
 
         serialized_config = toml.dumps(config_to_save)
 
@@ -937,6 +944,18 @@ youtube_oauth = _MultiTenantConfigSection(
             "selected_channel_id": "",
             "default_privacy_status": "public",
             "made_for_kids": False,
+        },
+    ),
+)
+bangai_credits = _MultiTenantConfigSection(
+    "bangai_credits",
+    _cfg.get(
+        "bangai_credits",
+        {
+            "use_bang_llm_credits": False,
+            "use_bang_j2v_credits": False,
+            "use_bang_material_credits": False,
+            "use_bang_voice_credits": False,
         },
     ),
 )
