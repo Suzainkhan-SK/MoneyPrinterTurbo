@@ -1607,7 +1607,7 @@ VOXCPM_PROMPT_TEXT_SESSION_KEY = "voxcpm_prompt_text_input"
 VOXCPM_HIGH_FIDELITY_SESSION_KEY = "voxcpm_high_fidelity_enabled"
 VOXCPM_SEPARATE_PROMPT_AUDIO_SESSION_KEY = "voxcpm_separate_prompt_audio_enabled"
 VOXCPM_PROMPT_EXAMPLE_MODE_SESSION_KEY = "voxcpm_prompt_example_mode"
-ONBOARDING_TOUR_KEY = "mpt-onboarding-v1"
+ONBOARDING_TOUR_KEY = "bangai-onboarding-v2"
 CUSTOM_LLM_ENDPOINT_ID = "custom"
 VOICE_MODE_TTS = "tts"
 VOICE_MODE_UPLOAD = "upload"
@@ -2474,6 +2474,15 @@ def _maybe_reload_cloud_volume(min_interval=30.0):
             modal.Volume.from_name("bangai-storage").reload()
         except Exception as e:
             logger.debug(f"modal volume reload skipped: {e}")
+
+
+def _maybe_commit_cloud_volume():
+    if os.path.exists("/root/storage"):
+        try:
+            import modal
+            modal.Volume.from_name("bangai-storage").commit()
+        except Exception as e:
+            logger.debug(f"modal volume commit skipped: {e}")
 
 
 def _scan_history_tasks(limit=30):
@@ -4222,9 +4231,121 @@ def tr_optional(key, fallback_language=""):
     return value if value else ""
 
 
+def _get_user_tour_identifier() -> str:
+    """Resolves a consistent identifier for tracking onboarding tour views per user.
+    Guarantees unified view counts across both Normal (embedded) mode and Full Window mode.
+    """
+    uid = str(st.session_state.get("bangai_user_id", "")).strip()
+    if not uid or uid == "guest":
+        try:
+            qp = st.query_params
+            uid = str(qp.get("user_id", "") or qp.get("uid", "")).strip()
+        except Exception:
+            pass
+    if not uid or uid == "guest":
+        email = str(st.session_state.get("bangai_email", "")).strip()
+        if not email or email == "guest@bangai.local":
+            try:
+                email = str(st.query_params.get("email", "")).strip()
+            except Exception:
+                pass
+        if email and email != "guest@bangai.local":
+            uid = f"email_{email.replace('@', '_at_').replace('.', '_')}"
+    if not uid or uid == "guest":
+        auth_u = st.session_state.get("bangai_auth_user", {})
+        uid = str(auth_u.get("userId") or auth_u.get("id") or "").strip()
+    if not uid or uid == "guest":
+        try:
+            if hasattr(st, "context") and hasattr(st.context, "cookies"):
+                c_uid = st.context.cookies.get("bangai_tour_uid")
+                if c_uid:
+                    uid = str(c_uid).strip()
+        except Exception:
+            pass
+    if not uid or uid == "guest":
+        uid = st.session_state.get("guest_user_id", "guest")
+    safe_uid = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", str(uid))
+    return safe_uid or "guest"
+
+
+def get_onboarding_view_count(user_id: str) -> int:
+    """Reads onboarding tour view count from persistent storage for this user."""
+    try:
+        central_path = os.path.join(root_dir, "storage", "onboarding_tour_views.json")
+        if os.path.exists(central_path):
+            with open(central_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if user_id in data:
+                    user_entry = data[user_id]
+                    if isinstance(user_entry, dict):
+                        return int(user_entry.get("views", 0))
+                    return int(user_entry)
+
+        user_file = os.path.join(root_dir, "storage", "users", user_id, "tour_views.json")
+        if os.path.exists(user_file):
+            with open(user_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return int(data.get("views", 0))
+    except Exception as e:
+        logger.warning(f"Failed to read onboarding view count for '{user_id}': {e}")
+    return 0
+
+
+def increment_onboarding_view_count(user_id: str) -> int:
+    """Increments the view count, writes to disk, and commits cloud volume."""
+    current_count = get_onboarding_view_count(user_id)
+    new_count = current_count + 1
+    try:
+        # Save to user-specific directory
+        user_dir = os.path.join(root_dir, "storage", "users", user_id)
+        os.makedirs(user_dir, exist_ok=True)
+        user_file = os.path.join(user_dir, "tour_views.json")
+        with open(user_file, "w", encoding="utf-8") as f:
+            json.dump({"views": new_count, "last_viewed": time.time()}, f)
+
+        # Save to centralized registry
+        storage_dir = os.path.join(root_dir, "storage")
+        os.makedirs(storage_dir, exist_ok=True)
+        central_path = os.path.join(storage_dir, "onboarding_tour_views.json")
+        data = {}
+        if os.path.exists(central_path):
+            try:
+                with open(central_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        data[user_id] = {"views": new_count, "last_viewed": time.time()}
+        with open(central_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+        _maybe_commit_cloud_volume()
+        return new_count
+    except Exception as e:
+        logger.warning(f"Failed to increment onboarding view count for '{user_id}': {e}")
+        return new_count
+
+
 def render_onboarding_tour():
-    # 引导只覆盖三个稳定入口，不尝试控制 Dialog、Tabs 或业务表单。这样既能让
-    # 新用户理解完整流程，也不会把引导状态与 Streamlit 的动态组件生命周期耦合。
+    user_id = _get_user_tour_identifier()
+    session_evaluated_key = f"{ONBOARDING_TOUR_KEY}-session-evaluated"
+
+    # Only evaluate once per Streamlit browser session
+    if session_evaluated_key not in st.session_state:
+        st.session_state[session_evaluated_key] = True
+        _maybe_reload_cloud_volume(min_interval=10.0)
+        current_views = get_onboarding_view_count(user_id)
+        if current_views >= 2:
+            st.session_state[f"{ONBOARDING_TOUR_KEY}-should-run"] = False
+            logger.info(f"Onboarding tour skipped for user '{user_id}' (already viewed {current_views} times, max 2)")
+        else:
+            new_views = increment_onboarding_view_count(user_id)
+            st.session_state[f"{ONBOARDING_TOUR_KEY}-should-run"] = True
+            logger.info(f"Onboarding tour started for user '{user_id}' (display #{new_views} of 2)")
+
+    if not st.session_state.get(f"{ONBOARDING_TOUR_KEY}-should-run", False):
+        return
+
+    # 引导覆盖三个核心入口：设置模型、配置视频主题、生成视频
     steps = [
         Tour.bind(
             "open_settings_dialog_button",
@@ -4234,10 +4355,10 @@ def render_onboarding_tour():
             align="end",
         ),
         Tour.bind(
-            "main_settings_grid",
+            "video_subject_field",
             title=tr("Onboarding Creation Settings Title"),
             desc=tr("Onboarding Creation Settings Description"),
-            side="top",
+            side="bottom",
             align="center",
         ),
         Tour.bind(
@@ -4249,16 +4370,12 @@ def render_onboarding_tour():
         ),
     ]
 
-    # streamlit-tour 1.1.0 没有在 Python 构造参数中暴露导航文案，但底层
-    # Driver.js 支持在每一步的 popover 配置中覆盖按钮文本。这里统一注入本地化
-    # 文案，并对内容做 HTML 转义，因为组件会通过 innerHTML 渲染这些字段。
+    # 统一注入本地化导航文案并转义
     previous_text = html.escape(tr("Onboarding Previous"))
     next_text = html.escape(tr("Onboarding Next"))
     done_text = html.escape(tr("Onboarding Done"))
     for index, step in enumerate(steps):
         step.popover["prevBtnText"] = f"&larr; {previous_text}"
-        # Driver.js 会在合并单步配置时覆盖已经替换过变量的进度模板，因此直接
-        # 写入当前步骤和总步骤数，避免页面显示未解析的 {{current}} 占位符。
         step.popover["progressText"] = f"{index + 1} / {len(steps)}"
         if index == len(steps) - 1:
             step.popover["doneBtnText"] = done_text
@@ -4271,11 +4388,15 @@ def render_onboarding_tour():
         show_progress=True,
         animate=True,
         overlay_opacity=0.55,
-        one_time_tour=True,
+        one_time_tour=False,  # 由 Python 跨模式跨会话精确限制每位用户最多展示 2 次
     )
 
-    # 每个 Streamlit 会话只主动启动一次。是否已经完成则由组件通过浏览器
-    # localStorage 判断，避免页面 rerun 或普通控件交互反复弹出引导。
+    # 若当前步骤已结束或被用户手动跳过，立即停止该会话后续的多余渲染
+    if tour.result and (tour.result.finished or tour.result.dismissed):
+        st.session_state[f"{ONBOARDING_TOUR_KEY}-should-run"] = False
+        return
+
+    # 每个 Streamlit 会话只主动启动一次
     auto_start_key = f"{ONBOARDING_TOUR_KEY}-auto-started"
     if not st.session_state.get(auto_start_key, False):
         st.session_state[auto_start_key] = True
