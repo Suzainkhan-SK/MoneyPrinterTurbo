@@ -215,6 +215,8 @@ def serve():
         try:
             body = await request.json()
             keys_data = body.get("keys", body)
+            if not isinstance(keys_data, dict):
+                keys_data = {}
             storage_path = "/root/storage/system_api_keys.json"
             os.makedirs("/root/storage", exist_ok=True)
             with open(storage_path, "w", encoding="utf-8") as f:
