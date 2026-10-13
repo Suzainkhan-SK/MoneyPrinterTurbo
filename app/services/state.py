@@ -1,6 +1,9 @@
 import ast
 import copy
+import json
+import os
 import threading
+import time
 from abc import ABC, abstractmethod
 
 from app.config import config
@@ -54,6 +57,24 @@ class MemoryState(BaseState):
             total = len(tasks)
         return tasks[start:end], total
 
+    def _persist_disk(self, task_id: str, task_dict: dict):
+        try:
+            from app.utils import utils
+            tdir = utils.task_dir(task_id, create=False)
+            if os.path.exists(tdir):
+                sfile = os.path.join(tdir, "state.json")
+                with open(sfile, "w", encoding="utf-8") as f:
+                    json.dump(task_dict, f, default=str, indent=2)
+                # If on modal, trigger volume commit quietly
+                if os.path.exists("/root/storage"):
+                    try:
+                        import modal
+                        modal.Volume.from_name("bangai-storage").commit()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     def update_task(
         self,
         task_id: str,
@@ -66,32 +87,66 @@ class MemoryState(BaseState):
             progress = 100
 
         with self._lock:
-            self._tasks[task_id] = {
+            existing = self._tasks.get(task_id, {})
+            merged = {
+                **existing,
                 "task_id": task_id,
                 "state": state,
                 "progress": progress,
+                "updated_at": time.time(),
                 **kwargs,
             }
+            self._tasks[task_id] = merged
+            self._persist_disk(task_id, merged)
 
     def get_task(self, task_id: str):
         with self._lock:
             task = self._tasks.get(task_id, None)
-            return copy.deepcopy(task) if task is not None else None
+            if task is not None:
+                return copy.deepcopy(task)
+
+            # Fallback to state.json on disk if task not in memory (e.g. new session or thread)
+            try:
+                from app.utils import utils
+                tdir = utils.task_dir(task_id, create=False)
+                sfile = os.path.join(tdir, "state.json")
+                if os.path.isfile(sfile):
+                    with open(sfile, "r", encoding="utf-8") as f:
+                        disk_data = json.load(f)
+                    if disk_data:
+                        self._tasks[task_id] = disk_data
+                        return copy.deepcopy(disk_data)
+            except Exception:
+                pass
+            return None
 
     def patch_task(self, task_id: str, **kwargs) -> bool:
-        # 异步发布只应补充发布状态，不能覆盖已经保存的视频、字幕等结果。
-        # 在同一把锁内完成存在性判断和字段合并，也可避免任务删除后
-        # 被后台线程重建。
         with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
-                return False
+                # Try loading from disk first
+                disk_task = self.get_task(task_id)
+                if disk_task is None:
+                    return False
+                task = self._tasks.get(task_id)
+                if task is None:
+                    return False
             task.update(copy.deepcopy(kwargs))
+            task["updated_at"] = time.time()
+            self._persist_disk(task_id, task)
             return True
 
     def delete_task(self, task_id: str):
         with self._lock:
             self._tasks.pop(task_id, None)
+        try:
+            from app.utils import utils
+            tdir = utils.task_dir(task_id, create=False)
+            sfile = os.path.join(tdir, "state.json")
+            if os.path.isfile(sfile):
+                os.remove(sfile)
+        except Exception:
+            pass
 
 
 # Redis state management

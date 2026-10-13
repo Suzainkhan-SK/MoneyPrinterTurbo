@@ -2316,27 +2316,35 @@ def _safe_load_task_script(task_path):
 def _find_final_task_video(task_path: str) -> str:
     """
     返回任务目录中序号最小的最终成片。
-
-    合成流程还会产生 combined、temp-clip 和 MoviePy 临时文件，这些文件不能
-    表示任务已成功完成，因此这里只接受 ``final-<序号>.<扩展名>``。
     """
     try:
         files = os.listdir(task_path)
     except OSError:
         return ""
 
-    # 如果存在 MoviePy 崩溃遗留或进行中的临时文件，说明渲染尚未正常结束
-    if any("TEMP_MPY" in file_name or file_name.endswith(".tmp") for file_name in files):
-        return ""
-
     candidates = []
     for file_name in files:
         match = _FINAL_VIDEO_PATTERN.fullmatch(file_name)
         if match:
-            candidates.append((int(match.group("index")), file_name))
+            # Must be a real final-X video, not a MoviePy audio temp file
+            if "TEMP_MPY" not in file_name and not file_name.endswith(".tmp"):
+                file_full = os.path.join(task_path, file_name)
+                try:
+                    if os.path.getsize(file_full) > 1024:
+                        candidates.append((int(match.group("index")), file_name))
+                except OSError:
+                    pass
 
     if not candidates:
         return ""
+
+    # Clean up leftover MoviePy scratch files once final video is confirmed
+    for file_name in files:
+        if "TEMP_MPY" in file_name or file_name.endswith(".tmp"):
+            try:
+                os.remove(os.path.join(task_path, file_name))
+            except Exception:
+                pass
 
     _, file_name = min(candidates, key=lambda item: item[0])
     return os.path.join(task_path, file_name)
@@ -2561,11 +2569,30 @@ def _scan_history_tasks(limit=30):
         if task_user_id and active_uid and task_user_id != active_uid:
             continue
 
+        # Determine actual state from video_file and state.json
+        disk_raw_state = state_data.get("state")
+        if video_file:
+            task_state = const.TASK_STATE_COMPLETE
+            task_progress = 100
+        elif disk_raw_state in (const.TASK_STATE_FAILED, "failed"):
+            task_state = const.TASK_STATE_FAILED
+            task_progress = int(state_data.get("progress", 0) or 0)
+        elif disk_raw_state in (const.TASK_STATE_PROCESSING, "processing", "queued"):
+            task_state = const.TASK_STATE_PROCESSING
+            task_progress = int(state_data.get("progress", 0) or 0)
+        elif disk_raw_state in (const.TASK_STATE_COMPLETE, "complete"):
+            task_state = const.TASK_STATE_COMPLETE
+            task_progress = 100
+        else:
+            task_state = None
+            task_progress = 0
+
         task_item = {
             "task_id": name,
             "subject": subject,
-            "state": const.TASK_STATE_COMPLETE if video_file else None,
-            "progress": 100 if video_file else 0,
+            "state": task_state,
+            "progress": task_progress,
+            "error": state_data.get("error", ""),
             "mtime": mtime,
             "task_path": task_path,
             "video_file": video_file,
@@ -4620,14 +4647,36 @@ def _render_generation_task_snapshot(task_id, task):
 @st.fragment(run_every=webui_task.TASK_LOG_REFRESH_INTERVAL_SECONDS)
 def _render_running_generation_task(task_id):
     """只在任务运行期间轮询；结束后切回静态结果，停止不必要的定时刷新。"""
+    task = None
     try:
         task = sm.state.get_task(task_id)
     except Exception as exc:
         logger.exception(
             f"failed to query WebUI generation task: task_id={task_id}, error={exc}"
         )
-        st.error(tr("Video Generation Failed"))
-        return
+
+    # Fallback to state.json or disk inspection if sm.state is empty in this session
+    if not task or not task.get("videos"):
+        try:
+            tasks_root = os.path.realpath(utils.task_dir())
+            task_path = os.path.realpath(os.path.join(tasks_root, str(task_id)))
+            state_file = os.path.join(task_path, "state.json")
+            if os.path.isfile(state_file):
+                with open(state_file, "r", encoding="utf-8") as f:
+                    disk_task = json.load(f)
+                    if disk_task:
+                        task = disk_task
+            if not task or not task.get("videos"):
+                final_vid = _find_final_task_video(task_path)
+                if final_vid:
+                    task = {
+                        "task_id": task_id,
+                        "state": const.TASK_STATE_COMPLETE,
+                        "progress": 100,
+                        "videos": [final_vid],
+                    }
+        except Exception:
+            pass
 
     state = _normalize_task_state((task or {}).get("state"))
     if state in {const.TASK_STATE_COMPLETE, const.TASK_STATE_FAILED}:
@@ -4642,6 +4691,26 @@ def _render_running_generation_task(task_id):
 def _render_current_generation_task():
     """在生成按钮下方恢复当前页面最近提交任务的可查询 UI。"""
     task_id = st.session_state.get("current_generation_task_id", "")
+    if not task_id:
+        # Check if active user has a recently submitted task that is still running or finished
+        try:
+            active_summaries = _collect_task_summaries(limit=5)
+            for cand in active_summaries:
+                c_state = _task_state_filter_key(cand)
+                # Re-attach if it's currently processing/queued
+                if c_state == "processing":
+                    task_id = cand["task_id"]
+                    st.session_state["current_generation_task_id"] = task_id
+                    break
+                # Or if it completed within the last 15 minutes and was not dismissed
+                elif c_state == "complete" and (time.time() - cand.get("mtime", 0) < 900):
+                    if not st.session_state.get(f"dismissed_task_{cand['task_id']}", False):
+                        task_id = cand["task_id"]
+                        st.session_state["current_generation_task_id"] = task_id
+                        break
+        except Exception as cand_exc:
+            logger.debug(f"re-attach task scan note: {cand_exc}")
+
     if not task_id:
         return
 
