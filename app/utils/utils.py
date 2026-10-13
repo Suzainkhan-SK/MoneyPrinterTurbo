@@ -91,18 +91,30 @@ def root_dir():
 
 
 _thread_local = threading.local()
-_global_user_id = None
 
 
 def set_current_user_id(user_id: str | None):
-    global _global_user_id
     clean_uid = str(user_id).strip() if user_id else None
     _thread_local.user_id = clean_uid
-    _global_user_id = clean_uid
 
 
 def get_current_user_id() -> str | None:
-    return getattr(_thread_local, "user_id", None) or _global_user_id or os.environ.get("CURRENT_USER_ID") or None
+    # 1. Thread-local priority (for active render pipelines and scoped workers)
+    tl_uid = getattr(_thread_local, "user_id", None)
+    if tl_uid:
+        return tl_uid
+
+    # 2. Streamlit session state (airtight per-browser session isolation)
+    try:
+        import streamlit as st
+        st_uid = st.session_state.get("bangai_user_id") or st.session_state.get("guest_user_id")
+        if st_uid:
+            return str(st_uid).strip()
+    except Exception:
+        pass
+
+    # 3. Process environment variable fallback
+    return os.environ.get("CURRENT_USER_ID") or None
 
 
 def storage_dir(sub_dir: str = "", create: bool = False):

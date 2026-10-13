@@ -2164,9 +2164,9 @@ def _initialize_session_state():
     )
 
     defaults = {
-        "video_subject": _saved_ui_text("last_subject", ""),
-        "video_script": _saved_ui_text("last_script", ""),
-        "video_terms": _saved_ui_text("last_terms", ""),
+        "video_subject": "",
+        "video_script": "",
+        "video_terms": "",
         "paragraph_number_input": _saved_ui_number(
             "paragraph_number",
             1,
@@ -2530,9 +2530,10 @@ def _scan_history_tasks(limit=30):
         return []
 
     task_entries.sort(key=lambda item: item[0], reverse=True)
+    active_uid = utils.get_current_user_id()
     tasks = []
     for mtime, name, task_path in task_entries[:limit]:
-        cache_key = (task_path, mtime)
+        cache_key = (active_uid, task_path, mtime)
         cached_info = _history_task_meta_cache.get(cache_key)
         if cached_info is not None:
             tasks.append(cached_info)
@@ -2554,6 +2555,11 @@ def _scan_history_tasks(limit=30):
                     state_data = json.load(sf)
             except Exception:
                 pass
+
+        # Strict multi-tenant isolation: verify task belongs to active_uid
+        task_user_id = str(params_data.get("user_id") or state_data.get("user_id") or "").strip()
+        if task_user_id and active_uid and task_user_id != active_uid:
+            continue
 
         task_item = {
             "task_id": name,
@@ -2588,8 +2594,8 @@ def _collect_task_summaries(limit=20):
         if not task_id:
             continue
         # Multi-tenant isolation: Only display runtime tasks that belong to the active user
-        task_uid = task.get("user_id")
-        if task_uid and active_uid and task_uid != active_uid:
+        task_uid = str(task.get("user_id") or "").strip()
+        if not task_uid or not active_uid or task_uid != active_uid:
             continue
 
         task_path = os.path.join(utils.task_dir(), task_id)
@@ -5872,6 +5878,9 @@ def _render_settings_dialog():
             on_change="rerun",
         )
 
+        if st.session_state.pop("settings_saved_dialog_banner", False):
+            st.success("✅ **Settings Saved Successfully**: All API credentials and configuration options have been saved.")
+
         with global_config_panel:
             st.markdown(f"### 🌐 Global Settings — Bang API Credits")
             st.markdown(
@@ -6968,9 +6977,9 @@ def _render_settings_dialog():
                     _set_runtime_config("json2video", "api_key", current_dialog_j2v)
                     st.session_state["json2video_api_key_input"] = current_dialog_j2v
                 _save_runtime_config()
+                st.session_state["settings_saved_dialog_banner"] = True
                 st.toast(tr("Settings saved successfully!"), icon="✅")
-                st.success(tr("Settings saved successfully!"))
-                st.rerun(scope="app")
+                st.rerun()
 
     _save_runtime_config()
 
@@ -7872,6 +7881,8 @@ def _render_script_settings(panel, params):
     with panel:
         with st.container(border=True):
             st.write(tr("Video Script Settings"))
+            if config.bangai_credits.get("use_bang_llm_credits", False):
+                st.info("⚡ **Bang API Credits Active**: High-retention video script and visual B-roll keywords will be generated using Bang AI's managed cloud LLM pool. No personal API key required.")
             # 标签行需要容纳“配置大模型”入口，因此无法继续使用 text_area
             # 内置标签。把标签和输入框收进同一个字段容器后，可覆盖内部间距，
             # 同时让该字段与页面上的其它表单控件保持一致的外部节奏。
@@ -8074,12 +8085,6 @@ def _render_script_settings(panel, params):
                 help=tr("Video Keywords Help"),
                 key="video_terms",
             )
-            if params.video_subject:
-                _set_runtime_config("ui", "last_subject", params.video_subject)
-            if params.video_script:
-                _set_runtime_config("ui", "last_script", params.video_script)
-            if params.video_terms:
-                _set_runtime_config("ui", "last_terms", params.video_terms)
 
 
 def _render_video_settings(panel, params):
@@ -8088,6 +8093,8 @@ def _render_video_settings(panel, params):
     with panel:
         with st.container(border=True):
             st.write(tr("Video Settings"))
+            if config.bangai_credits.get("use_bang_material_credits", False):
+                st.info("⚡ **Bang API Credits Active**: HD stock footage queries draw directly from Bang AI's load-balanced media key pool.")
             video_concat_modes = [
                 (tr("Sequential"), "sequential"),
                 (tr("Random"), "random"),
@@ -9802,6 +9809,8 @@ def _render_audio_settings(panel, params):
     with panel:
         with st.container(border=True):
             st.write(tr("Audio Settings"))
+            if config.bangai_credits.get("use_bang_voice_credits", False) or config.bangai_credits.get("use_bang_j2v_credits", False):
+                st.info("⚡ **Bang API Credits Active**: ElevenLabs Studio voices and cloud composition draw from Bang AI's managed audio pool.")
 
             # 配音方式是音频设置的一级状态，负责明确区分自动配音、用户上传和无配音。
             # 旧配置没有 voice_mode 时，根据原 tts_server 的无配音哨兵保持兼容。
@@ -11376,6 +11385,36 @@ def _render_application():
     restore_succeeded = st.session_state.pop("task_restore_succeeded", False)
     if restore_applied or restore_succeeded:
         st.success(tr("Task Configuration Loaded"))
+
+    # Active Bang API Credits visual status banner across Stock Studio
+    active_bang_credits = []
+    if config.bangai_credits.get("use_bang_llm_credits", False):
+        active_bang_credits.append("🧠 AI LLM Script & Keywords")
+    if config.bangai_credits.get("use_bang_j2v_credits", False):
+        active_bang_credits.append("⚡ JSON2Video Cloud Render")
+    if config.bangai_credits.get("use_bang_material_credits", False):
+        active_bang_credits.append("🎬 HD Stock Footage")
+    if config.bangai_credits.get("use_bang_voice_credits", False):
+        active_bang_credits.append("🎙️ Neural Voice & TTS")
+
+    if active_bang_credits:
+        st.markdown(
+            f"""
+            <div style="background: linear-gradient(135deg, rgba(6, 182, 212, 0.12), rgba(59, 130, 246, 0.12)); border: 1.5px solid rgba(6, 182, 212, 0.4); border-radius: 12px; padding: 12px 18px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 20px;">⚡</span>
+                    <div>
+                        <strong style="color: #06b6d4; font-size: 13.5px;">Bang API Credits Active:</strong>
+                        <span style="font-size: 13px; color: #f8fafc; margin-left: 6px;">{' &nbsp;•&nbsp; '.join(active_bang_credits)}</span>
+                    </div>
+                </div>
+                <span style="background: rgba(6, 182, 212, 0.25); color: #06b6d4; border: 1px solid rgba(6, 182, 212, 0.5); padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 800;">
+                    MANAGED ZERO-DOWNTIME POOL
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     with st.container(key="main_settings_grid"):
         panel = st.columns(4)
