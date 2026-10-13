@@ -2338,14 +2338,6 @@ def _find_final_task_video(task_path: str) -> str:
     if not candidates:
         return ""
 
-    # Clean up leftover MoviePy scratch files once final video is confirmed
-    for file_name in files:
-        if "TEMP_MPY" in file_name or file_name.endswith(".tmp"):
-            try:
-                os.remove(os.path.join(task_path, file_name))
-            except Exception:
-                pass
-
     _, file_name = min(candidates, key=lambda item: item[0])
     return os.path.join(task_path, file_name)
 
@@ -4691,8 +4683,9 @@ def _render_running_generation_task(task_id):
 def _render_current_generation_task():
     """在生成按钮下方恢复当前页面最近提交任务的可查询 UI。"""
     task_id = st.session_state.get("current_generation_task_id", "")
-    if not task_id:
-        # Check if active user has a recently submitted task that is still running or finished
+    if not task_id and not st.session_state.get("_task_reattach_checked", False):
+        st.session_state["_task_reattach_checked"] = True
+        # Check only once on initial session load, never on normal interaction reruns
         try:
             active_summaries = _collect_task_summaries(limit=5)
             for cand in active_summaries:

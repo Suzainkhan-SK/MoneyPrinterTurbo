@@ -64,14 +64,7 @@ class MemoryState(BaseState):
             if os.path.exists(tdir):
                 sfile = os.path.join(tdir, "state.json")
                 with open(sfile, "w", encoding="utf-8") as f:
-                    json.dump(task_dict, f, default=str, indent=2)
-                # If on modal, trigger volume commit quietly
-                if os.path.exists("/root/storage"):
-                    try:
-                        import modal
-                        modal.Volume.from_name("bangai-storage").commit()
-                    except Exception:
-                        pass
+                    json.dump(task_dict, f, default=str)
         except Exception:
             pass
 
