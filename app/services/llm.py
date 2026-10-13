@@ -657,15 +657,19 @@ def _generate_response(prompt: str, app_config=None) -> str:
     if use_bang_credits:
         active_cloud_model = key_rotator.get_active_model(llm_provider)
 
-    max_attempts = 5
+    key_rotator.ensure_fresh_keys(15.0)
+    pool_keys = key_rotator.get_all_keys("llm", provider=llm_provider) or key_rotator.get_keys(llm_provider)
+    max_attempts = max(len(pool_keys), 5)
     last_err_msg = ""
     for attempt in range(max_attempts):
         rot_key, rot_label = key_rotator.get_key("llm", provider=llm_provider)
+        if not rot_key:
+            rot_key, rot_label = key_rotator.get_key(llm_provider)
         try:
             if rot_key:
                 logger.info(
                     f"[LLM] Using Bang API Credits ({rot_label}, model='{active_cloud_model or 'default'}') "
-                    f"for '{llm_provider}' (attempt {attempt + 1})"
+                    f"for '{llm_provider}' (attempt {attempt + 1}/{max_attempts})"
                 )
             res = _execute_llm_request_inner(
                 prompt,
@@ -673,18 +677,21 @@ def _generate_response(prompt: str, app_config=None) -> str:
                 forced_api_key=rot_key,
                 forced_model_name=active_cloud_model
             )
+            if res and isinstance(res, str) and res.startswith("Error:"):
+                raise RuntimeError(res)
+
             if rot_key:
                 key_rotator.report_success("llm", rot_key)
             return res
         except Exception as e:
             last_err_msg = f"Error: {_sanitize_error_message(e)}"
-            if rot_key and key_rotator.is_exhaustion_error(e):
-                logger.warning(f"[LLM] Key exhausted/rate-limited for '{llm_provider}', reporting to KeyRotator and rotating: {e}")
+            if rot_key:
+                logger.warning(f"[LLM] Key '{rot_label}' failed for '{llm_provider}' ({e}). Reporting to KeyRotator and rotating to next key...")
                 key_rotator.report_failure("llm", rot_key, error_text=str(e))
                 if attempt < max_attempts - 1:
                     continue
             return last_err_msg
-    return last_err_msg or "Error: All keys in pool exhausted"
+    return last_err_msg or f"Error: All {len(pool_keys)} keys in pool for '{llm_provider}' exhausted"
 
 
 def test_connection() -> tuple[bool, str, float]:

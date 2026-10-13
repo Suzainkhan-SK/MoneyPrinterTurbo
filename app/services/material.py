@@ -349,76 +349,96 @@ def search_videos_pexels(
     aspect = VideoAspect(video_aspect)
     video_orientation = aspect.name
     video_width, video_height = aspect.to_resolution()
-    api_key = get_api_key("pexels_api_keys")
-    headers = {
-        "Authorization": api_key,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-    }
-    # Build URL
-    params = {"query": search_term, "per_page": 20, "orientation": video_orientation}
-    query_url = f"https://api.pexels.com/v1/videos/search?{urlencode(params)}"
-    logger.info(f"searching videos on pexels: term={search_term!r}")
 
-    try:
-        r = requests.get(
-            query_url,
-            headers=headers,
-            proxies=config.proxy,
-            verify=_get_tls_verify(),
-            timeout=(30, 60),
-        )
-        response = r.json()
-        video_items = []
-        if "videos" not in response:
-            logger.error("pexels video search returned an unsupported response")
-            return video_items
-        videos = response["videos"]
-        # loop through each video in the result
-        for v in videos:
-            duration = v["duration"]
-            # check if video has desired minimum duration
-            if duration < minimum_duration:
-                continue
-            video_files = v["video_files"]
-            # loop through each url to determine the best quality
-            for video in video_files:
-                w = int(video["width"])
-                h = int(video["height"])
-                if (
-                    _matches_video_aspect(w, h, aspect)
-                    and w == video_width
-                    and h == video_height
-                ):
-                    item = MaterialInfo()
-                    item.provider = "pexels"
-                    item.url = video["link"]
-                    item.duration = duration
-                    item.source_info = {
-                        "provider": "pexels",
-                        "search_term": search_term,
-                        "asset_id": (
-                            str(v.get("id")) if v.get("id") is not None else None
-                        ),
-                        "source_page": _safe_public_url(v.get("url")),
-                        "creator": _creator_info(v.get("user")),
-                        "rendition": {
-                            "id": (
-                                str(video.get("id"))
-                                if video.get("id") is not None
-                                else None
+    from app.services.key_rotator import key_rotator
+    key_rotator.ensure_fresh_keys(15.0)
+    pool_keys = key_rotator.get_all_keys("stock_footage", provider="pexels") or key_rotator.get_keys("pexels")
+    max_attempts = max(len(pool_keys), 3)
+
+    for attempt in range(max_attempts):
+        api_key = get_api_key("pexels_api_keys")
+        if not api_key:
+            break
+
+        headers = {
+            "Authorization": api_key,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+        }
+        params = {"query": search_term, "per_page": 20, "orientation": video_orientation}
+        query_url = f"https://api.pexels.com/v1/videos/search?{urlencode(params)}"
+        logger.info(f"searching videos on pexels (attempt {attempt + 1}/{max_attempts}): term={search_term!r}")
+
+        try:
+            r = requests.get(
+                query_url,
+                headers=headers,
+                proxies=config.proxy,
+                verify=_get_tls_verify(),
+                timeout=(30, 60),
+            )
+            if r.status_code in (429, 401, 403):
+                logger.warning(f"[Material] Pexels key failed (HTTP {r.status_code}), rotating to backup key (attempt {attempt + 1}/{max_attempts})...")
+                key_rotator.report_failure("stock_footage", api_key, r.status_code, r.text)
+                if attempt < max_attempts - 1:
+                    continue
+                return []
+
+            response = r.json()
+            video_items = []
+            if "videos" not in response:
+                logger.warning(f"[Material] Pexels search returned non-video response (HTTP {r.status_code}), rotating key...")
+                key_rotator.report_failure("stock_footage", api_key, r.status_code, str(response))
+                if attempt < max_attempts - 1:
+                    continue
+                return video_items
+
+            # Success with this key!
+            key_rotator.report_success("stock_footage", api_key)
+            videos = response["videos"]
+            for v in videos:
+                duration = v["duration"]
+                if duration < minimum_duration:
+                    continue
+                video_files = v["video_files"]
+                for video in video_files:
+                    w = int(video["width"])
+                    h = int(video["height"])
+                    if (
+                        _matches_video_aspect(w, h, aspect)
+                        and w == video_width
+                        and h == video_height
+                    ):
+                        item = MaterialInfo()
+                        item.provider = "pexels"
+                        item.url = video["link"]
+                        item.duration = duration
+                        item.source_info = {
+                            "provider": "pexels",
+                            "search_term": search_term,
+                            "asset_id": (
+                                str(v.get("id")) if v.get("id") is not None else None
                             ),
-                            "width": w,
-                            "height": h,
-                        },
-                    }
-                    video_items.append(item)
-                    break
-        return video_items
-    except Exception as e:
-        logger.error(
-            "pexels video search failed: "
-            f"error={type(e).__name__}, detail={_redact_request_error(e, api_key)}"
-        )
+                            "source_page": _safe_public_url(v.get("url")),
+                            "creator": _creator_info(v.get("user")),
+                            "rendition": {
+                                "id": (
+                                    str(video.get("id"))
+                                    if video.get("id") is not None
+                                    else None
+                                ),
+                                "width": w,
+                                "height": h,
+                            },
+                        }
+                        video_items.append(item)
+                        break
+            return video_items
+        except Exception as e:
+            logger.warning(f"[Material] Pexels search error on key ({type(e).__name__}): rotating to next key...")
+            key_rotator.report_failure("stock_footage", api_key, error_text=str(e))
+            if attempt < max_attempts - 1:
+                continue
+            return []
 
     return []
 
@@ -429,122 +449,136 @@ def search_videos_pixabay(
     video_aspect: VideoAspect = VideoAspect.portrait,
 ) -> List[MaterialInfo]:
     aspect = VideoAspect(video_aspect)
-
     video_width, video_height = aspect.to_resolution()
 
-    api_key = get_api_key("pixabay_api_keys")
-    # Build URL
-    params = {
-        "q": search_term,
-        "video_type": "all",  # Accepted values: "all", "film", "animation"
-        "per_page": 50,
-        "key": api_key,
-    }
-    query_url = f"https://pixabay.com/api/videos/?{urlencode(params)}"
-    logger.info(
-        f"searching videos on pixabay: term={search_term!r}, "
-        f"proxy_enabled={bool(config.proxy)}"
-    )
+    from app.services.key_rotator import key_rotator
+    key_rotator.ensure_fresh_keys(15.0)
+    pool_keys = key_rotator.get_all_keys("stock_footage", provider="pixabay") or key_rotator.get_keys("pixabay")
+    max_attempts = max(len(pool_keys), 3)
 
-    try:
-        r = requests.get(
-            query_url, proxies=config.proxy, verify=_get_tls_verify(), timeout=(30, 60)
+    for attempt in range(max_attempts):
+        api_key = get_api_key("pixabay_api_keys")
+        if not api_key:
+            break
+
+        # Build URL
+        params = {
+            "q": search_term,
+            "video_type": "all",
+            "per_page": 50,
+            "key": api_key,
+        }
+        query_url = f"https://pixabay.com/api/videos/?{urlencode(params)}"
+        logger.info(
+            f"searching videos on pixabay (attempt {attempt + 1}/{max_attempts}): term={search_term!r}, "
+            f"proxy_enabled={bool(config.proxy)}"
         )
-        status_code = int(getattr(r, "status_code", 200))
-        headers = getattr(r, "headers", {}) or {}
-        content_type = str(headers.get("content-type", ""))
-        retry_after = headers.get("retry-after")
-        cf_ray = headers.get("cf-ray")
-
-        if _is_cloudflare_challenge(r):
-            logger.error(
-                "pixabay search was blocked by a Cloudflare challenge: "
-                f"status={status_code}, cf_ray={cf_ray or 'unknown'}. "
-                "Check the server network or proxy, or use Pexels/Coverr instead."
-            )
-            return []
-
-        if status_code == 429:
-            logger.error(
-                "pixabay API rate limit exceeded: "
-                f"status=429, retry_after={retry_after or 'unknown'}"
-            )
-            return []
-
-        if status_code >= 400:
-            logger.error(
-                "pixabay search request failed: "
-                f"status={status_code}, content_type={content_type or 'unknown'}"
-            )
-            return []
 
         try:
-            response = r.json()
-        except ValueError:
-            logger.error(
-                "pixabay returned an unexpected non-JSON response: "
-                f"status={status_code}, content_type={content_type or 'unknown'}"
+            r = requests.get(
+                query_url, proxies=config.proxy, verify=_get_tls_verify(), timeout=(30, 60)
             )
-            return []
+            status_code = int(getattr(r, "status_code", 200))
+            headers = getattr(r, "headers", {}) or {}
+            content_type = str(headers.get("content-type", ""))
+            retry_after = headers.get("retry-after")
+            cf_ray = headers.get("cf-ray")
 
-        video_items = []
-        if "hits" not in response:
-            logger.error("pixabay video search returned an unsupported response")
-            return video_items
-        videos = response["hits"]
-        # loop through each video in the result
-        for v in videos:
-            duration = v["duration"]
-            # check if video has desired minimum duration
-            if duration < minimum_duration:
-                continue
-            video_files = v["videos"]
-            # loop through each url to determine the best quality
-            for video_type in video_files:
-                video = video_files[video_type]
-                try:
-                    w = int(video["width"])
-                    h = int(video["height"])
-                except (KeyError, TypeError, ValueError):
-                    continue
-                # Pixabay 很少返回原生方形视频；1:1 输出继续接受满足分辨率的
-                # 候选并由合成阶段裁剪。横竖屏则必须严格匹配目标方向。
-                orientation_matches = aspect == VideoAspect.square or (
-                    _matches_video_aspect(w, h, aspect)
+            if _is_cloudflare_challenge(r):
+                logger.error(
+                    "pixabay search was blocked by a Cloudflare challenge: "
+                    f"status={status_code}, cf_ray={cf_ray or 'unknown'}."
                 )
-                if orientation_matches and w >= video_width:
-                    item = MaterialInfo()
-                    item.provider = "pixabay"
-                    item.url = video["url"]
-                    item.duration = duration
-                    item.source_info = {
-                        "provider": "pixabay",
-                        "search_term": search_term,
-                        "asset_id": (
-                            str(v.get("id")) if v.get("id") is not None else None
-                        ),
-                        "source_page": _safe_public_url(v.get("pageURL")),
-                        "creator": _creator_info(
-                            {
-                                "id": v.get("user_id"),
-                                "name": v.get("user"),
-                            }
-                        ),
-                        "rendition": {
-                            "id": video_type,
-                            "width": w,
-                            "height": video.get("height"),
-                        },
-                    }
-                    video_items.append(item)
-                    break
-        return video_items
-    except Exception as e:
-        error_message = _redact_request_error(e, api_key)
-        logger.error(
-            "pixabay search request failed: "
-            f"error={type(e).__name__}, detail={error_message}"
-        )
+                return []
+
+            if status_code in (429, 401, 403):
+                logger.warning(
+                    f"[Material] Pixabay API rate limit/auth failed (HTTP {status_code}), rotating to backup key (attempt {attempt + 1}/{max_attempts})..."
+                )
+                key_rotator.report_failure("stock_footage", api_key, status_code, r.text)
+                if attempt < max_attempts - 1:
+                    continue
+                return []
+
+            if status_code >= 400:
+                logger.warning(
+                    f"[Material] Pixabay search request failed (HTTP {status_code}), rotating key..."
+                )
+                key_rotator.report_failure("stock_footage", api_key, status_code, r.text)
+                if attempt < max_attempts - 1:
+                    continue
+                return []
+
+            try:
+                response = r.json()
+            except ValueError:
+                logger.warning(
+                    f"[Material] Pixabay returned non-JSON response, rotating key..."
+                )
+                key_rotator.report_failure("stock_footage", api_key, status_code, r.text)
+                if attempt < max_attempts - 1:
+                    continue
+                return []
+
+            video_items = []
+            if "hits" not in response:
+                logger.warning("[Material] Pixabay video search returned no 'hits' field, rotating key...")
+                key_rotator.report_failure("stock_footage", api_key, status_code, str(response))
+                if attempt < max_attempts - 1:
+                    continue
+                return video_items
+
+            # Success with this key!
+            key_rotator.report_success("stock_footage", api_key)
+            videos = response["hits"]
+            for v in videos:
+                duration = v["duration"]
+                if duration < minimum_duration:
+                    continue
+                video_files = v["videos"]
+                for video_type in video_files:
+                    video = video_files[video_type]
+                    try:
+                        w = int(video["width"])
+                        h = int(video["height"])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    orientation_matches = aspect == VideoAspect.square or (
+                        _matches_video_aspect(w, h, aspect)
+                    )
+                    if orientation_matches and w >= video_width:
+                        item = MaterialInfo()
+                        item.provider = "pixabay"
+                        item.url = video["url"]
+                        item.duration = duration
+                        item.source_info = {
+                            "provider": "pixabay",
+                            "search_term": search_term,
+                            "asset_id": (
+                                str(v.get("id")) if v.get("id") is not None else None
+                            ),
+                            "source_page": _safe_public_url(v.get("pageURL")),
+                            "creator": _creator_info(
+                                {
+                                    "id": v.get("user_id"),
+                                    "name": v.get("user"),
+                                }
+                            ),
+                            "rendition": {
+                                "id": video_type,
+                                "width": w,
+                                "height": video.get("height"),
+                            },
+                        }
+                        video_items.append(item)
+                        break
+            return video_items
+        except Exception as e:
+            logger.warning(f"[Material] Pixabay search exception ({type(e).__name__}): rotating to next key...")
+            key_rotator.report_failure("stock_footage", api_key, error_text=str(e))
+            if attempt < max_attempts - 1:
+                continue
+            return []
 
     return []
 

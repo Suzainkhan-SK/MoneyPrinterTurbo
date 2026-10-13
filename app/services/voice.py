@@ -1712,6 +1712,12 @@ def azure_tts_v2(
             # 正式生成都会按 WebUI/API 传入的 voice_rate 调整语速。
             result = speech_synthesizer.speak_ssml_async(ssml).get()
             if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                if use_bang_voice and speech_key:
+                    try:
+                        from app.services.key_rotator import key_rotator
+                        key_rotator.report_success("voice_tts", speech_key)
+                    except Exception:
+                        pass
                 logger.success(f"azure v2 speech synthesis succeeded: {voice_file}")
                 return sub_maker
             elif result.reason == speechsdk.ResultReason.Canceled:
@@ -1720,9 +1726,16 @@ def azure_tts_v2(
                     f"azure v2 speech synthesis canceled: {cancellation_details.reason}"
                 )
                 if cancellation_details.reason == speechsdk.CancellationReason.Error:
+                    err_msg = str(cancellation_details.error_details)
                     logger.error(
-                        f"azure v2 speech synthesis error: {cancellation_details.error_details}"
+                        f"azure v2 speech synthesis error: {err_msg}"
                     )
+                    if use_bang_voice and speech_key:
+                        try:
+                            from app.services.key_rotator import key_rotator
+                            key_rotator.report_failure("voice_tts", speech_key, error_text=err_msg)
+                        except Exception:
+                            pass
             logger.info(f"completed, output file: {voice_file}")
         except Exception as e:
             logger.error(f"failed, error: {str(e)}")
@@ -2295,20 +2308,22 @@ def _submit_and_poll_json2video_movie(
         ],
     }
 
-    use_bang_j2v = bool(config.bangai_credits.get("use_bang_j2v_credits", False))
-    max_j2v_attempts = 5 if use_bang_j2v else 1
-    project_id = None
-    winning_key = None
+    use_bang_j2v = bool(config.bangai_credits.get("use_bang_j2v_credits", False)) or bool(config.bangai_credits.get("use_bang_voice_credits", False))
+    from app.services.key_rotator import key_rotator
+    key_rotator.ensure_fresh_keys(15.0)
+    pool_keys = key_rotator.get_all_keys("json2video") or key_rotator.get_keys("json2video")
+    max_j2v_attempts = max(len(pool_keys), 5) if (use_bang_j2v or len(pool_keys) > 0) else 1
 
+    last_error = None
     for attempt in range(max_j2v_attempts):
         clean_primary_key = ""
-        if use_bang_j2v:
+        rot_label = ""
+        if use_bang_j2v or len(pool_keys) > 0:
             try:
-                from app.services.key_rotator import key_rotator
                 rot_key, rot_label = key_rotator.get_key("json2video")
                 if rot_key:
                     clean_primary_key = rot_key
-                    logger.info(f"[Voice] Utilizing Bang API Credits rotated key ({rot_label}) for json2video (attempt {attempt + 1})")
+                    logger.info(f"[Voice] Utilizing Bang API Credits rotated key ({rot_label}) for json2video (attempt {attempt + 1}/{max_j2v_attempts})")
             except Exception:
                 pass
 
@@ -2322,78 +2337,92 @@ def _submit_and_poll_json2video_movie(
             "x-api-key": clean_primary_key,
             "Content-Type": "application/json",
         }
-        logger.info(f"Submitting json2video {part_label} voiceover (voice_id: {voice_id}, text length: {len(text)})")
+        logger.info(f"Submitting json2video {part_label} voiceover (attempt {attempt + 1}/{max_j2v_attempts}, voice_id: {voice_id}, text length: {len(text)})")
         try:
             res = requests.post(url, json=payload, headers=headers, timeout=30)
-            if res.status_code == 200:
-                data = res.json()
-                pid = data.get("project") or data.get("jobId")
-                if not pid:
-                    raise RuntimeError(f"json2video failed to return project ID: {data}")
-                project_id = pid
-                winning_key = clean_primary_key
-                if use_bang_j2v:
-                    try:
-                        from app.services.key_rotator import key_rotator
-                        key_rotator.report_success("json2video", clean_primary_key)
-                    except Exception:
-                        pass
-                break
-            else:
+            if res.status_code != 200:
                 err_msg = f"json2video API error (HTTP {res.status_code}): {res.text[:300]}"
-                logger.error(err_msg)
-                if use_bang_j2v:
-                    try:
-                        from app.services.key_rotator import key_rotator
-                        if key_rotator.is_exhaustion_error(res.text, res.status_code):
-                            logger.warning(f"[Voice] json2video key failed ({res.status_code}), rotating to backup key...")
-                            key_rotator.report_failure("json2video", clean_primary_key, res.status_code, res.text)
-                            if attempt < max_j2v_attempts - 1:
-                                continue
-                    except Exception:
-                        pass
-                raise RuntimeError(err_msg)
-        except Exception as exc:
-            if use_bang_j2v and clean_primary_key:
+                logger.warning(f"[Voice] {err_msg}")
+                last_error = RuntimeError(err_msg)
+                key_rotator.report_failure("json2video", clean_primary_key, res.status_code, res.text)
+                if attempt < max_j2v_attempts - 1:
+                    logger.info(f"[Voice] Submit failed on key ({rot_label or clean_primary_key[:8]}), rotating to next key for attempt {attempt + 2}...")
+                    continue
+                else:
+                    raise last_error
+
+            data = res.json()
+            pid = data.get("project") or data.get("jobId")
+            if not pid:
+                raise RuntimeError(f"json2video failed to return project ID: {data}")
+
+            project_id = pid
+            logger.info(f"json2video {part_label} submitted (project: {project_id}). Polling for render completion...")
+
+            # Poll for completion inside the attempt loop so render-time failures rotate seamlessly
+            poll_url = f"https://api.json2video.com/v2/movies?project={project_id}"
+            start_time = time.time()
+            max_wait = 180
+            poll_failed = False
+            poll_err_text = ""
+
+            while time.time() - start_time < max_wait:
+                time.sleep(3)
                 try:
-                    from app.services.key_rotator import key_rotator
-                    if key_rotator.is_exhaustion_error(exc):
-                        key_rotator.report_failure("json2video", clean_primary_key, error_text=str(exc))
-                        if attempt < max_j2v_attempts - 1:
-                            continue
-                except Exception:
-                    pass
+                    poll_res = requests.get(poll_url, headers={"x-api-key": clean_primary_key}, timeout=15)
+                    if poll_res.status_code != 200:
+                        logger.warning(f"json2video poll status {poll_res.status_code}, retrying...")
+                        continue
+                    poll_data = poll_res.json()
+                    movie = poll_data.get("movie") or {}
+                    status = movie.get("status") or poll_data.get("status")
+                    if status == "done" or movie.get("url"):
+                        mp4_url = movie.get("url") or poll_data.get("url")
+                        if mp4_url:
+                            logger.success(f"json2video {part_label} completed: {mp4_url}")
+                            key_rotator.report_success("json2video", clean_primary_key)
+                            return mp4_url
+                    elif status in ("error", "failed"):
+                        poll_err_text = movie.get("message") or poll_data.get("message") or "Render failed"
+                        poll_failed = True
+                        break
+                except requests.RequestException as pe:
+                    logger.warning(f"json2video poll network error: {pe}")
+
+            if poll_failed:
+                logger.warning(f"[Voice] json2video {part_label} render failed on key {rot_label or clean_primary_key[:8]}: {poll_err_text}")
+                last_error = RuntimeError(f"json2video {part_label} failed in render: {poll_err_text}")
+                key_rotator.report_failure("json2video", clean_primary_key, error_text=poll_err_text)
+                if attempt < max_j2v_attempts - 1:
+                    logger.info(f"[Voice] Render failed on key, automatically rotating to next key for attempt {attempt + 2}...")
+                    continue
+                else:
+                    raise last_error
+
+            if time.time() - start_time >= max_wait:
+                last_error = TimeoutError(f"json2video {part_label} timed out after {max_wait}s")
+                key_rotator.report_failure("json2video", clean_primary_key, error_text="Timeout")
+                if attempt < max_j2v_attempts - 1:
+                    logger.info(f"[Voice] Render timed out, rotating to next key for attempt {attempt + 2}...")
+                    continue
+                else:
+                    raise last_error
+
+        except Exception as exc:
+            if "failed after" in str(exc):
+                raise
+            last_error = exc
+            logger.warning(f"[Voice] json2video attempt {attempt + 1} exception: {exc}")
+            if clean_primary_key:
+                key_rotator.report_failure("json2video", clean_primary_key, error_text=str(exc))
+            if attempt < max_j2v_attempts - 1:
+                logger.info(f"[Voice] Rotating to next key for attempt {attempt + 2}...")
+                continue
             raise
 
-    logger.info(f"json2video {part_label} submitted, project: {project_id}. Polling for completion...")
-
-    poll_url = f"https://api.json2video.com/v2/movies?project={project_id}"
-    start_time = time.time()
-    max_wait = 180
-
-    active_poll_key = winning_key or api_key
-    while time.time() - start_time < max_wait:
-        time.sleep(3)
-        try:
-            poll_res = requests.get(poll_url, headers={"x-api-key": active_poll_key}, timeout=15)
-            if poll_res.status_code != 200:
-                logger.warning(f"json2video poll status {poll_res.status_code}, retrying...")
-                continue
-            poll_data = poll_res.json()
-            movie = poll_data.get("movie") or {}
-            status = movie.get("status") or poll_data.get("status")
-            if status == "done" or movie.get("url"):
-                mp4_url = movie.get("url") or poll_data.get("url")
-                if mp4_url:
-                    logger.success(f"json2video {part_label} completed: {mp4_url}")
-                    return mp4_url
-            elif status in ("error", "failed"):
-                err_text = movie.get("message") or poll_data.get("message") or "Unknown error"
-                raise RuntimeError(f"json2video {part_label} failed in render: {err_text}")
-        except requests.RequestException as e:
-            logger.warning(f"json2video poll network error: {e}")
-
-    raise TimeoutError(f"json2video {part_label} timed out after {max_wait}s")
+    if last_error:
+        raise last_error
+    raise RuntimeError(f"json2video {part_label} failed after {max_j2v_attempts} attempts across key pool")
 
 
 def _convert_urls_to_mp3_cloudconvert(
@@ -2632,37 +2661,23 @@ def elevenlabs_tts(
         logger.error("ElevenLabs TTS text is empty")
         return None
 
-    api_key = get_elevenlabs_api_key()
-    if not api_key:
-        logger.error("ElevenLabs API key is not set")
-        return None
+    from app.services.key_rotator import key_rotator
+    use_bang_voice = bool(config.bangai_credits.get("use_bang_voice_credits", False))
+    pool_keys = key_rotator.get_all_keys("voice_tts", provider="elevenlabs") or key_rotator.get_keys("elevenlabs")
+    max_attempts = max(len(pool_keys), 3) if (use_bang_voice or len(pool_keys) > 0) else 3
 
-    if not model_id:
-        model_id = config.elevenlabs.get("model_id", "eleven_multilingual_v2")
+    for i in range(max_attempts):
+        api_key = get_elevenlabs_api_key()
+        if not api_key:
+            logger.error("ElevenLabs API key is not set")
+            return None
 
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-    headers = {
-        "xi-api-key": api_key,
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "text": text,
-        "model_id": model_id,
-        "voice_settings": {
-            "stability": 0.5,
-            "similarity_boost": 0.75,
-            "style": 0.0,
-            "use_speaker_boost": True,
-        },
-    }
-
-    # Errors where retrying will never help (auth/access/validation failures).
-    _NON_RETRYABLE_CODES = {401, 403, 422}
-    _NON_RETRYABLE_STATUSES = {"voice_disabled", "voice_access_denied", "unauthorized"}
-
-    for i in range(3):
+        headers = {
+            "xi-api-key": api_key,
+            "Content-Type": "application/json",
+        }
         try:
-            logger.info(f"start elevenlabs tts, voice_id: {voice_id}, try: {i + 1}")
+            logger.info(f"start elevenlabs tts, voice_id: {voice_id}, try: {i + 1}/{max_attempts}")
             ensure_file_path_exists(voice_file)
 
             response = requests.post(url, json=payload, headers=headers, timeout=60)
@@ -2675,12 +2690,14 @@ def elevenlabs_tts(
                 except Exception:
                     pass
 
-                if response.status_code in _NON_RETRYABLE_CODES or error_status in _NON_RETRYABLE_STATUSES:
-                    logger.error(
-                        f"ElevenLabs TTS failed (non-retryable) — voice_id: {voice_id}, "
-                        f"status: {response.status_code}, error: {error_status or response.text[:200]}. "
-                        "Please select a different ElevenLabs voice."
+                # If this key failed with auth or quota, report failure to KeyRotator and rotate
+                if response.status_code in (401, 403, 429) or error_status in ("unauthorized", "quota_exceeded"):
+                    logger.warning(
+                        f"[Voice] ElevenLabs key hit error ({response.status_code}), rotating to backup key..."
                     )
+                    key_rotator.report_failure("voice_tts", api_key, response.status_code, response.text)
+                    if i < max_attempts - 1:
+                        continue
                     return None
 
                 logger.error(

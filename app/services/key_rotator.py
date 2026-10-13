@@ -172,15 +172,30 @@ class KeyRotator:
                         k_str = str(item.get("key", "")).strip()
                         if not k_str:
                             continue
+                        status = str(item.get("status", "active")).lower()
+                        bal = float(item.get("balance", 100.0)) if item.get("balance") is not None else 100.0
+                        now_ts = time.time()
+                        init_cooldown = (now_ts + 3600.0) if (status in ("exhausted", "invalid") or bal <= 0) else float(item.get("cooldown_until", 0.0))
                         pool_items.append({
                             "key": k_str,
                             "label": item.get("label") or f"{provider.capitalize()} Key #{idx + 1}",
-                            "status": item.get("status", "active"),
-                            "cooldown_until": float(item.get("cooldown_until", 0.0)),
+                            "status": status,
+                            "balance": bal,
+                            "cooldown_until": init_cooldown,
                             "fail_count": int(item.get("fail_count", 0)),
                             "success_count": int(item.get("success_count", 0)),
                             "last_used": float(item.get("last_used", 0.0))
                         })
+
+                # Sort keys: healthy keys with higher balance first, exhausted/cooling keys last
+                now_ts = time.time()
+                pool_items.sort(
+                    key=lambda x: (
+                        1 if x["cooldown_until"] <= now_ts else 0,
+                        x.get("balance", 0.0)
+                    ),
+                    reverse=True
+                )
                 self._pools[provider] = pool_items
                 if provider not in self._indices:
                     self._indices[provider] = 0
@@ -332,7 +347,10 @@ class KeyRotator:
             now = time.time()
             is_rate_limit = (status_code == 429) or ("rate" in error_text.lower() and "limit" in error_text.lower()) or ("429" in error_text)
             is_quota_exhausted = (status_code in (401, 403)) or any(
-                w in error_text.lower() for w in ["quota", "exhausted", "credits", "balance", "insufficient", "resource_exhausted"]
+                w in error_text.lower() for w in [
+                    "quota", "exhausted", "credits", "balance", "insufficient", "resource_exhausted",
+                    "upgrade your plan", "not enough credits", "doesn't have enough credits", "failed in render"
+                ]
             )
 
             # Determine cooldown duration (3 minutes for rate limits; 1 hour for exhausted balance)
@@ -365,14 +383,16 @@ class KeyRotator:
 
     def is_exhaustion_error(self, error: Any, status_code: Optional[int] = None) -> bool:
         """Determines if an error is a rate limit or quota exhaustion that warrants failover."""
-        if status_code == 429:
+        if status_code in (429, 401, 403):
             return True
         err_str = str(error).lower()
         trigger_terms = [
             "429", "too many requests", "rate limit", "ratelimit",
             "resource_exhausted", "quota", "exceeded", "balance",
             "insufficient_quota", "credits", "unauthorized", "expired",
-            "forbidden", "credit balance"
+            "forbidden", "credit balance", "upgrade your plan",
+            "not enough credits", "doesn't have enough credits", "failed in render",
+            "payment required"
         ]
         return any(term in err_str for term in trigger_terms)
 
