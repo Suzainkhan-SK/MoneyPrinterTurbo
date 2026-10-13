@@ -33,47 +33,86 @@ class KeyRotator:
         self._last_loaded = 0.0
         self.reload_keys()
 
-    def reload_keys(self) -> bool:
-        """Loads or reloads keys from persistent volume or Netlify fallback."""
+    def reload_keys(self, force_remote: bool = False) -> bool:
+        """Loads or reloads keys from remote Netlify control plane (Atlas) or local persistent volume."""
         with self._lock:
+            now = time.time()
             loaded_data = None
+
+            # 1. Proactive remote fetch if forced, empty in memory, or cache TTL expired (>20s)
+            is_stale = (now - self._last_loaded) > 20.0
+            is_empty = len(self._pools) == 0 or all(len(p) == 0 for p in self._pools.values())
+
+            if force_remote or is_stale or is_empty:
+                loaded_data = self._fetch_remote_keys()
+
+            # 2. If remote fetch succeeded, apply and persist
+            if loaded_data and isinstance(loaded_data, dict) and len(loaded_data) > 0:
+                self._apply_raw_pools(loaded_data)
+                self._last_loaded = now
+                try:
+                    os.makedirs(STORAGE_DIR, exist_ok=True)
+                    with open(SYSTEM_KEYS_FILE, "w", encoding="utf-8") as f:
+                        json.dump(loaded_data, f, indent=2)
+                except Exception:
+                    pass
+                return True
+
+            # 3. Fallback: load from persistent volume file if remote was unreachable
             if os.path.exists(SYSTEM_KEYS_FILE):
                 try:
                     with open(SYSTEM_KEYS_FILE, "r", encoding="utf-8") as f:
-                        loaded_data = json.load(f)
-                    logger.info(f"[KeyRotator] Loaded system keys from storage file: {SYSTEM_KEYS_FILE}")
+                        disk_data = json.load(f)
+                    if disk_data and isinstance(disk_data, dict):
+                        self._apply_raw_pools(disk_data)
+                        self._last_loaded = now
+                        logger.info(f"[KeyRotator] Loaded keys from local storage fallback: {SYSTEM_KEYS_FILE}")
+                        return True
                 except Exception as e:
-                    logger.warning(f"[KeyRotator] Failed reading local keys file {SYSTEM_KEYS_FILE}: {e}")
+                    logger.warning(f"[KeyRotator] Local keys fallback read notice: {e}")
 
-            # If storage file doesn't exist or is empty, attempt remote fetch from Netlify
-            if not loaded_data or not isinstance(loaded_data, dict) or len(loaded_data) == 0:
-                loaded_data = self._fetch_remote_keys()
-
-            if loaded_data and isinstance(loaded_data, dict):
-                self._apply_raw_pools(loaded_data)
-                self._last_loaded = time.time()
-                return True
             return False
 
+    def ensure_fresh_keys(self, max_age_seconds: float = 15.0) -> bool:
+        """Ensures that in-memory key pools are updated within max_age_seconds."""
+        with self._lock:
+            if (time.time() - self._last_loaded) > max_age_seconds:
+                return self.reload_keys(force_remote=True)
+            return True
+
     def _fetch_remote_keys(self) -> Optional[dict]:
-        """Fetch active system keys from Netlify administrative control plane."""
+        """Fetch active system keys from Netlify administrative control plane (Atlas) or Modal API."""
+        import requests
+
+        # 1. Primary: Netlify get-system-keys (direct from live MongoDB Atlas)
         try:
-            import requests
-            res = requests.get(REMOTE_KEYS_ENDPOINT, timeout=10)
+            res = requests.get(REMOTE_KEYS_ENDPOINT, timeout=6)
             if res.ok:
                 resp_json = res.json()
-                if resp_json.get("success") and resp_json.get("data"):
-                    logger.info("[KeyRotator] Successfully fetched system keys from Netlify endpoint")
-                    # Cache to local file if directory exists
-                    try:
-                        os.makedirs(STORAGE_DIR, exist_ok=True)
-                        with open(SYSTEM_KEYS_FILE, "w", encoding="utf-8") as f:
-                            json.dump(resp_json["data"], f, indent=2)
-                    except Exception:
-                        pass
-                    return resp_json["data"]
+                data = resp_json.get("data")
+                if resp_json.get("success") and isinstance(data, dict):
+                    logger.info(f"[KeyRotator] Successfully fetched live system keys from Netlify ({len(data)} pools)")
+                    return data
         except Exception as e:
-            logger.debug(f"[KeyRotator] Remote keys fetch notice: {e}")
+            logger.debug(f"[KeyRotator] Netlify remote fetch notice: {e}")
+
+        # 2. Secondary fallback: Modal Cluster local/serve endpoints
+        modal_endpoints = [
+            "https://cmpunktg--bangai-stock-studio-serve.modal.run/api/bangai/system-keys",
+            "https://cmpunktg1--bangai-stock-studio-serve.modal.run/api/bangai/system-keys",
+        ]
+        for ep in modal_endpoints:
+            try:
+                res = requests.get(ep, timeout=5)
+                if res.ok:
+                    resp_json = res.json()
+                    data = resp_json.get("data")
+                    if isinstance(data, dict) and len(data) > 0:
+                        logger.info(f"[KeyRotator] Successfully fetched system keys from Modal endpoint {ep}")
+                        return data
+            except Exception as me:
+                logger.debug(f"[KeyRotator] Modal endpoint fetch notice ({ep}): {me}")
+
         return None
 
     def _apply_raw_pools(self, raw_data: dict):
@@ -118,16 +157,21 @@ class KeyRotator:
         """
         Returns (api_key, label) for the requested service/provider using round-robin across healthy keys.
         Automatically skips keys in rate-limit cooldown.
+        When a specific provider is requested (e.g. 'gemini'), strictly checks that provider's pool
+        to avoid passing mismatched keys (e.g. OpenAI key to Gemini client).
         """
         with self._lock:
-            # Check provider first (e.g. 'gemini'), then fallback to service (e.g. 'llm')
             target_pool_key = None
-            if provider and provider in self._pools and len(self._pools[provider]) > 0:
-                target_pool_key = provider
+            if provider:
+                clean_prov = str(provider).strip().lower()
+                if clean_prov in self._pools and len(self._pools[clean_prov]) > 0:
+                    target_pool_key = clean_prov
+                elif service in self._pools and len(self._pools[service]) > 0 and service == clean_prov:
+                    target_pool_key = service
             elif service in self._pools and len(self._pools[service]) > 0:
                 target_pool_key = service
             else:
-                # Alias lookups
+                # Alias lookups only when NO specific provider was requested
                 aliases = {
                     "stock_footage": ["pexels", "pixabay"],
                     "voice_tts": ["azure_speech", "elevenlabs", "siliconflow"],

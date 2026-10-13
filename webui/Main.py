@@ -5898,6 +5898,7 @@ def _render_settings_dialog():
             )
 
             from app.services.key_rotator import key_rotator
+            key_rotator.ensure_fresh_keys(max_age_seconds=15.0)
             pool_stats = key_rotator.get_pool_status()
 
             # 1. LLM API Credits Card
@@ -5907,7 +5908,7 @@ def _render_settings_dialog():
             with col_l1:
                 cur_llm_credit = bool(config.bangai_credits.get("use_bang_llm_credits", False))
                 use_llm_credit = st.checkbox(
-                    "Enable Bang API Credits for LLM (Gemini / OpenAI / DeepSeek)",
+                    "Enable Bang API Credits for LLM (Gemini / OpenAI / DeepSeek / Groq)",
                     value=cur_llm_credit,
                     key="settings_bang_llm_credits_checkbox",
                     help="When enabled, script generation uses Bang AI's managed cloud API keys instead of your personal key.",
@@ -5916,9 +5917,12 @@ def _render_settings_dialog():
                     _set_runtime_config("bangai_credits", "use_bang_llm_credits", use_llm_credit)
                     st.rerun()
             with col_l2:
-                llm_keys_count = pool_stats.get("llm", {}).get("total", 0) + pool_stats.get("gemini", {}).get("total", 0) + pool_stats.get("openai", {}).get("total", 0)
+                llm_keys_count = sum(pool_stats.get(p, {}).get("total", 0) for p in ["llm", "gemini", "openai", "deepseek", "groq"])
                 if cur_llm_credit:
-                    st.success(f"● Bang Credits Active ({llm_keys_count} keys)")
+                    if llm_keys_count > 0:
+                        st.success(f"● Bang Credits Active ({llm_keys_count} keys)")
+                    else:
+                        st.warning("⚠️ Active (0 keys in Atlas pool)")
                 else:
                     st.info("○ Personal Key (BYOK)")
 
@@ -5942,7 +5946,10 @@ def _render_settings_dialog():
             with col_j2:
                 j2v_keys_count = pool_stats.get("json2video", {}).get("total", 0)
                 if cur_j2v_credit:
-                    st.success(f"● Bang Credits Active ({j2v_keys_count} keys)")
+                    if j2v_keys_count > 0:
+                        st.success(f"● Bang Credits Active ({j2v_keys_count} keys)")
+                    else:
+                        st.warning("⚠️ Active (0 keys in Atlas pool)")
                 else:
                     st.info("○ Personal Key (BYOK)")
 
@@ -5964,16 +5971,19 @@ def _render_settings_dialog():
                     _set_runtime_config("bangai_credits", "use_bang_material_credits", use_mat_credit)
                     st.rerun()
             with col_m2:
-                mat_keys_count = pool_stats.get("pexels", {}).get("total", 0) + pool_stats.get("pixabay", {}).get("total", 0) + pool_stats.get("stock_footage", {}).get("total", 0)
+                mat_keys_count = sum(pool_stats.get(p, {}).get("total", 0) for p in ["stock_footage", "pexels", "pixabay"])
                 if cur_mat_credit:
-                    st.success(f"● Bang Credits Active ({mat_keys_count} keys)")
+                    if mat_keys_count > 0:
+                        st.success(f"● Bang Credits Active ({mat_keys_count} keys)")
+                    else:
+                        st.warning("⚠️ Active (0 keys in Atlas pool)")
                 else:
                     st.info("○ Personal Key (BYOK)")
 
             st.divider()
 
             # 4. Voice & TTS API Credits Card
-            st.markdown("#### 🎙️ 4. Neural Voice & TTS Audio Engine (Azure / ElevenLabs)")
+            st.markdown("#### 🎙️ 4. Neural Voice & TTS Audio Engine (Azure / ElevenLabs / SiliconFlow)")
             st.caption("Generates ultra-realistic voices via Bang AI's managed speech and audio API pool.")
             col_v1, col_v2 = st.columns([2.5, 1])
             with col_v1:
@@ -5988,15 +5998,19 @@ def _render_settings_dialog():
                     _set_runtime_config("bangai_credits", "use_bang_voice_credits", use_vox_credit)
                     st.rerun()
             with col_v2:
-                vox_keys_count = pool_stats.get("azure_speech", {}).get("total", 0) + pool_stats.get("elevenlabs", {}).get("total", 0) + pool_stats.get("voice_tts", {}).get("total", 0)
+                vox_keys_count = sum(pool_stats.get(p, {}).get("total", 0) for p in ["voice_tts", "azure_speech", "elevenlabs", "siliconflow"])
                 if cur_vox_credit:
-                    st.success(f"● Bang Credits Active ({vox_keys_count} keys)")
+                    if vox_keys_count > 0:
+                        st.success(f"● Bang Credits Active ({vox_keys_count} keys)")
+                    else:
+                        st.warning("⚠️ Active (0 keys in Atlas pool)")
                 else:
                     st.info("○ Personal Key (BYOK)")
 
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("🔄 Refresh System Key Status & Cooldowns", key="refresh_bang_credits_btn"):
-                key_rotator.reload_keys()
+                key_rotator.reload_keys(force_remote=True)
+                st.toast("⚡ System API key pools refreshed from Atlas cloud!")
                 st.rerun()
 
         with publish_config_panel:
