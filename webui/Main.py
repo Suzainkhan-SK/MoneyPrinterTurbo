@@ -3225,7 +3225,8 @@ def _render_quick_restyle_voice_selector(curr_voice: str, task_id: str) -> str:
 
     if voice.is_json2video_voice(selected_voice):
         cur_j2v_key = str(config.json2video.get("api_key", "") or "").strip()
-        if not cur_j2v_key:
+        use_bang_j2v = bool(config.bangai_credits.get("use_bang_j2v_credits", False)) or bool(config.bangai_credits.get("use_bang_voice_credits", False))
+        if not cur_j2v_key and not use_bang_j2v:
             j2v_key_input = st.text_input(
                 "🔑 json2video API Key (Required for ElevenLabs voices)",
                 value=cur_j2v_key,
@@ -6524,6 +6525,8 @@ def _render_settings_dialog():
             with st.container(border=True):
                 st.markdown(f"#### {tr('Stock Video APIs')}")
                 st.caption(tr("Stock Video APIs Help"))
+                if bool(config.bangai_credits.get("use_bang_material_credits", False)):
+                    st.info("⚡ **Bang API Credits Active for Stock Video**: Pexels and Pixabay queries draw directly from Bang AI's load-balanced key pool. Personal keys below are optional BYOK backups.")
 
                 pexels_api_key = _get_material_api_keys("pexels_api_keys")
                 pixabay_api_key = _get_material_api_keys("pixabay_api_keys")
@@ -11053,26 +11056,40 @@ def _render_generation_controls(
             st.error(tr("Please Select a Valid Video Source"))
             st.stop()
 
-        if params.video_source == "pexels" and not config.app.get(
-            "pexels_api_keys", ""
-        ):
-            _remove_active_generation_task(task_id)
-            st.error(tr("Please Enter the Pexels API Key"))
-            st.stop()
+        # Ensure KeyRotator is fresh and runtime config is populated from Bang API Credits pools
+        from app.services.key_rotator import key_rotator
+        key_rotator.ensure_fresh_keys(15.0)
+        key_rotator.sync_to_runtime_config()
+        use_bang_material = bool(config.bangai_credits.get("use_bang_material_credits", False))
+        use_bang_voice = bool(config.bangai_credits.get("use_bang_voice_credits", False))
+        use_bang_j2v = bool(config.bangai_credits.get("use_bang_j2v_credits", False))
 
-        if params.video_source == "pixabay" and not config.app.get(
-            "pixabay_api_keys", ""
-        ):
-            _remove_active_generation_task(task_id)
-            st.error(tr("Please Enter the Pixabay API Key"))
-            st.stop()
+        if params.video_source == "pexels":
+            has_user_key = bool(config.app.get("pexels_api_keys", ""))
+            has_env_key = bool(os.getenv("PEXELS_API_KEY", "").strip() or os.getenv("PEXELS_API_KEYS", "").strip())
+            has_rot_key = key_rotator.has_keys("pexels") or bool(key_rotator.get_key("stock_footage", provider="pexels")[0])
+            if not (has_user_key or has_env_key or (use_bang_material and has_rot_key) or has_rot_key):
+                _remove_active_generation_task(task_id)
+                st.error(tr("Please Enter the Pexels API Key"))
+                st.stop()
 
-        if params.video_source == "coverr" and not config.app.get(
-            "coverr_api_keys", ""
-        ):
-            _remove_active_generation_task(task_id)
-            st.error(tr("Please Enter the Coverr API Key"))
-            st.stop()
+        if params.video_source == "pixabay":
+            has_user_key = bool(config.app.get("pixabay_api_keys", ""))
+            has_env_key = bool(os.getenv("PIXABAY_API_KEY", "").strip() or os.getenv("PIXABAY_API_KEYS", "").strip())
+            has_rot_key = key_rotator.has_keys("pixabay") or bool(key_rotator.get_key("stock_footage", provider="pixabay")[0])
+            if not (has_user_key or has_env_key or (use_bang_material and has_rot_key) or has_rot_key):
+                _remove_active_generation_task(task_id)
+                st.error(tr("Please Enter the Pixabay API Key"))
+                st.stop()
+
+        if params.video_source == "coverr":
+            has_user_key = bool(config.app.get("coverr_api_keys", ""))
+            has_env_key = bool(os.getenv("COVERR_API_KEY", "").strip() or os.getenv("COVERR_API_KEYS", "").strip())
+            has_rot_key = key_rotator.has_keys("coverr") or bool(key_rotator.get_key("stock_footage", provider="coverr")[0])
+            if not (has_user_key or has_env_key or (use_bang_material and has_rot_key) or has_rot_key):
+                _remove_active_generation_task(task_id)
+                st.error(tr("Please Enter the Coverr API Key"))
+                st.stop()
 
         if params.video_source == "wavespeed" and not config.app.get(
             "wavespeed_api_keys", ""
@@ -11205,20 +11222,24 @@ def _render_generation_controls(
         if (
             params.bgm_type == "elevenlabs"
             and bgm_service.should_use_bgm(params.bgm_type, params.bgm_volume)
-            and not elevenlabs_music_service.is_enabled()
         ):
-            _remove_active_generation_task(task_id)
-            st.error(tr("ElevenLabs API Key Required"))
-            st.stop()
+            has_user_el = bool(elevenlabs_music_service.is_enabled())
+            has_rot_el = key_rotator.has_keys("elevenlabs") or bool(key_rotator.get_key("voice_tts", provider="elevenlabs")[0])
+            if not (has_user_el or (use_bang_voice and has_rot_el) or has_rot_el):
+                _remove_active_generation_task(task_id)
+                st.error(tr("ElevenLabs API Key Required"))
+                st.stop()
 
         if (
             voice_mode == VOICE_MODE_TTS
             and voice.is_json2video_voice(params.voice_name)
-            and not (config.json2video.get("api_key", "").strip() or os.getenv("JSON2VIDEO_API_KEY", "").strip())
         ):
-            _remove_active_generation_task(task_id)
-            st.error("json2video API Key is required when using json2video (ElevenLabs Premium) voice.")
-            st.stop()
+            has_user_j2v = bool(config.json2video.get("api_key", "").strip() or os.getenv("JSON2VIDEO_API_KEY", "").strip())
+            has_rot_j2v = key_rotator.has_keys("json2video") or bool(key_rotator.get_key("json2video")[0])
+            if not (has_user_j2v or ((use_bang_j2v or use_bang_voice) and has_rot_j2v) or has_rot_j2v):
+                _remove_active_generation_task(task_id)
+                st.error("json2video API Key is required when using json2video (ElevenLabs Premium) voice.")
+                st.stop()
 
         if params.video_source == "local" and not has_local_materials:
             # 本地素材为空时继续执行会先产生 TTS/字幕，最后才在素材预处理阶段失败。

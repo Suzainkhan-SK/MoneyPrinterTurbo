@@ -185,6 +185,72 @@ class KeyRotator:
                 if provider not in self._indices:
                     self._indices[provider] = 0
 
+            # Automatically synchronize active pool keys to runtime config
+            self.sync_to_runtime_config()
+
+    def get_keys(self, provider: str) -> List[str]:
+        """Returns all raw key strings in this provider's pool."""
+        with self._lock:
+            clean = str(provider).strip().lower()
+            pool = self._pools.get(clean, [])
+            return [p["key"] for p in pool if p.get("key")]
+
+    def has_keys(self, provider: str) -> bool:
+        """Returns True if this provider has at least one key configured in its pool or aliases."""
+        with self._lock:
+            clean = str(provider).strip().lower()
+            pool = self._pools.get(clean, [])
+            if len(pool) > 0:
+                return True
+            aliases = {
+                "stock_footage": ["pexels", "pixabay"],
+                "voice_tts": ["azure_speech", "elevenlabs", "siliconflow"],
+                "llm": ["gemini", "openai", "deepseek", "groq"]
+            }
+            for alias in aliases.get(clean, []):
+                if len(self._pools.get(alias, [])) > 0:
+                    return True
+            return False
+
+    def sync_to_runtime_config(self):
+        """
+        Dynamically bridges active Bang API Credits from Atlas/KeyRotator into runtime config.app.
+        Guarantees that ANY legacy validation check or material lookup across the app succeeds
+        seamlessly when Bang API Credits are active.
+        """
+        try:
+            from app.config import config
+            # 1. Stock Footage (Pexels / Pixabay)
+            if config.bangai_credits.get("use_bang_material_credits", False):
+                pexels_keys = self.get_keys("pexels")
+                if pexels_keys:
+                    config.app["pexels_api_keys"] = pexels_keys
+                pixabay_keys = self.get_keys("pixabay")
+                if pixabay_keys:
+                    config.app["pixabay_api_keys"] = pixabay_keys
+
+            # 2. JSON2Video & Voice
+            if config.bangai_credits.get("use_bang_j2v_credits", False) or config.bangai_credits.get("use_bang_voice_credits", False):
+                j2v_keys = self.get_keys("json2video")
+                if j2v_keys and not config.json2video.get("api_key"):
+                    config.json2video["api_key"] = j2v_keys[0]
+
+            # 3. ElevenLabs TTS
+            if config.bangai_credits.get("use_bang_voice_credits", False):
+                el_keys = self.get_keys("elevenlabs")
+                if el_keys and not config.elevenlabs.get("api_key"):
+                    config.elevenlabs["api_key"] = el_keys[0]
+
+            # 4. Azure Speech TTS
+            if config.bangai_credits.get("use_bang_voice_credits", False):
+                az_keys = self.get_keys("azure_speech")
+                if az_keys and not config.azure.get("speech_key"):
+                    config.azure["speech_key"] = az_keys[0]
+                    if not config.azure.get("speech_region"):
+                        config.azure["speech_region"] = "eastus"
+        except Exception as e:
+            logger.debug(f"[KeyRotator] sync_to_runtime_config notice: {e}")
+
     def get_key(self, service: str, provider: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
         """
         Returns (api_key, label) for the requested service/provider using round-robin across healthy keys.

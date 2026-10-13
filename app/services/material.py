@@ -174,29 +174,52 @@ def _get_tls_verify() -> bool:
 
 def get_api_key(cfg_key: str):
     use_bang_material = bool(config.bangai_credits.get("use_bang_material_credits", False))
+    provider_name = "pexels" if "pexels" in cfg_key else ("pixabay" if "pixabay" in cfg_key else "coverr" if "coverr" in cfg_key else "stock_footage")
+    from app.services.key_rotator import key_rotator
+
+    # 1. Primary path: Bang API Credits active for Stock Footage
     if use_bang_material:
-        from app.services.key_rotator import key_rotator
-        provider_name = "pexels" if "pexels" in cfg_key else ("pixabay" if "pixabay" in cfg_key else "stock_footage")
+        key_rotator.ensure_fresh_keys(15.0)
         rot_key, rot_label = key_rotator.get_key("stock_footage", provider=provider_name)
+        if not rot_key:
+            rot_key, rot_label = key_rotator.get_key(provider_name)
         if rot_key:
             logger.info(f"[Material] Utilizing Bang API Credits rotated key ({rot_label}) for '{provider_name}'")
             return rot_key
 
+    # 2. Check personal / BYOK keys in config.app
     api_keys = config.app.get(cfg_key)
-    if not api_keys:
-        raise ValueError(
-            f"\n\n##### {cfg_key} is not set #####\n\n"
-            f"Please set it in the config.toml file: {config.config_file}\n"
-        )
+    if api_keys:
+        if isinstance(api_keys, str) and api_keys.strip():
+            return api_keys.strip()
+        if isinstance(api_keys, list) and len(api_keys) > 0:
+            clean_keys = [str(k).strip() for k in api_keys if str(k).strip()]
+            if clean_keys:
+                global _api_key_counter
+                with _api_key_lock:
+                    _api_key_counter += 1
+                    return clean_keys[_api_key_counter % len(clean_keys)]
 
-    # if only one key is provided, return it
-    if isinstance(api_keys, str):
-        return api_keys
+    # 3. Check environment variables (e.g. PEXELS_API_KEY, PIXABAY_API_KEY)
+    env_name = f"{provider_name.upper()}_API_KEY"
+    env_val = os.getenv(env_name, "").strip() or os.getenv(f"{env_name}S", "").strip()
+    if env_val:
+        logger.info(f"[Material] Utilizing environment variable {env_name} for '{provider_name}'")
+        return env_val
 
-    global _api_key_counter
-    with _api_key_lock:
-        _api_key_counter += 1
-        return api_keys[_api_key_counter % len(api_keys)]
+    # 4. Fallback: Check KeyRotator pool even if user toggle was unselected
+    key_rotator.ensure_fresh_keys(15.0)
+    rot_key, rot_label = key_rotator.get_key("stock_footage", provider=provider_name)
+    if not rot_key:
+        rot_key, rot_label = key_rotator.get_key(provider_name)
+    if rot_key:
+        logger.info(f"[Material] Utilizing KeyRotator fallback key ({rot_label}) for '{provider_name}'")
+        return rot_key
+
+    raise ValueError(
+        f"\n\n##### {cfg_key} is not set #####\n\n"
+        f"Please add a {provider_name.capitalize()} key in the Admin Panel Key Vault or enter your personal key in Settings.\n"
+    )
 
 
 def _redact_secret(message: str, secret: str) -> str:
