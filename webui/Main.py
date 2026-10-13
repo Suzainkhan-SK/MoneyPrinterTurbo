@@ -1740,6 +1740,7 @@ _RUNTIME_CONFIG_SECTIONS = {
     "json2video": config.json2video,
     "ui": config.ui,
     "youtube_oauth": config.youtube_oauth,
+    "bangai_credits": config.bangai_credits,
 }
 # 设置预设与密钥备份使用各自的文件标识。导入时先校验 schema 和版本，
 # 避免把任务记录、config.toml 或其它 JSON 误当成本功能的导出文件。
@@ -1800,7 +1801,7 @@ CREDENTIAL_WIDGET_STATE_ALIASES = {
     ("azure", "speech_region"): ("azure_speech_region_input", "settings_azure_speech_region_input"),
 }
 # ui 分区只保存界面偏好，不含任何凭据，备份时整体跳过。
-KEY_BACKUP_EXCLUDED_SECTIONS = frozenset({"ui"})
+KEY_BACKUP_EXCLUDED_SECTIONS = frozenset({"ui", "bangai_credits"})
 
 
 # -----------------------------------------------------------------------------
@@ -1813,7 +1814,14 @@ def _set_runtime_config(section_name, key, value):
     更新 WebUI 配置，但不等待正在生成视频的后台任务。
     自动同步所有 widget alias 在 st.session_state 中的值，避免面板间互相覆盖。
     """
-    config_section = _RUNTIME_CONFIG_SECTIONS[section_name]
+    config_section = _RUNTIME_CONFIG_SECTIONS.get(section_name)
+    if config_section is None:
+        if hasattr(config, section_name):
+            config_section = getattr(config, section_name)
+            _RUNTIME_CONFIG_SECTIONS[section_name] = config_section
+        else:
+            logger.warning(f"Unknown config section: {section_name}")
+            return False
     updated = config.update_config_nonblocking(config_section, key, value)
 
     # 同步该配置项关联的所有前端控件输入框，防止切页或整页 rerun 时因残留旧值而覆盖新密钥
@@ -1841,7 +1849,14 @@ def _set_runtime_config(section_name, key, value):
 
 def _delete_runtime_config(section_name, key):
     """删除 WebUI 配置项；后台任务占用配置时延后执行。"""
-    config_section = _RUNTIME_CONFIG_SECTIONS[section_name]
+    config_section = _RUNTIME_CONFIG_SECTIONS.get(section_name)
+    if config_section is None:
+        if hasattr(config, section_name):
+            config_section = getattr(config, section_name)
+            _RUNTIME_CONFIG_SECTIONS[section_name] = config_section
+        else:
+            logger.warning(f"Unknown config section: {section_name}")
+            return False
     deleted = config.delete_config_nonblocking(config_section, key)
     if not deleted:
         logger.debug(f"deferred WebUI config delete: section={section_name}, key={key}")
@@ -5890,6 +5905,7 @@ def _render_settings_dialog():
                 )
                 if use_llm_credit != cur_llm_credit:
                     _set_runtime_config("bangai_credits", "use_bang_llm_credits", use_llm_credit)
+                    st.rerun()
             with col_l2:
                 llm_keys_count = pool_stats.get("llm", {}).get("total", 0) + pool_stats.get("gemini", {}).get("total", 0) + pool_stats.get("openai", {}).get("total", 0)
                 if cur_llm_credit:
@@ -5913,6 +5929,7 @@ def _render_settings_dialog():
                 )
                 if use_j2v_credit != cur_j2v_credit:
                     _set_runtime_config("bangai_credits", "use_bang_j2v_credits", use_j2v_credit)
+                    st.rerun()
             with col_j2:
                 j2v_keys_count = pool_stats.get("json2video", {}).get("total", 0)
                 if cur_j2v_credit:
@@ -5936,6 +5953,7 @@ def _render_settings_dialog():
                 )
                 if use_mat_credit != cur_mat_credit:
                     _set_runtime_config("bangai_credits", "use_bang_material_credits", use_mat_credit)
+                    st.rerun()
             with col_m2:
                 mat_keys_count = pool_stats.get("pexels", {}).get("total", 0) + pool_stats.get("pixabay", {}).get("total", 0) + pool_stats.get("stock_footage", {}).get("total", 0)
                 if cur_mat_credit:
@@ -5959,6 +5977,7 @@ def _render_settings_dialog():
                 )
                 if use_vox_credit != cur_vox_credit:
                     _set_runtime_config("bangai_credits", "use_bang_voice_credits", use_vox_credit)
+                    st.rerun()
             with col_v2:
                 vox_keys_count = pool_stats.get("azure_speech", {}).get("total", 0) + pool_stats.get("elevenlabs", {}).get("total", 0) + pool_stats.get("voice_tts", {}).get("total", 0)
                 if cur_vox_credit:
