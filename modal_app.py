@@ -55,10 +55,10 @@ app = modal.App("bangai-stock-studio")
 @app.function(
     image=image,
     volumes={"/root/storage": volume},
-    scaledown_window=60,
-    timeout=1200,
-    cpu=2,
-    memory=4096
+    scaledown_window=900,
+    timeout=1800,
+    cpu=4,
+    memory=8192
 )
 @modal.concurrent(max_inputs=100)
 @modal.web_server(8501, startup_timeout=60.0)

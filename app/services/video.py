@@ -412,6 +412,14 @@ def _write_videofile_with_codec_fallback(clip, output_file: str, codec: str, **k
     生成任务不能因为高级编码器不可用而整体失败，所以这里把回退集中处理。
     """
     effective_codec = _get_effective_video_codec(codec)
+    # Ensure faststart and yuv420p for all mp4 renders to guarantee web and YouTube compatibility
+    ffmpeg_params = list(kwargs.pop("ffmpeg_params", []) or [])
+    if "-movflags" not in ffmpeg_params:
+        ffmpeg_params.extend(["-movflags", "+faststart"])
+    if "-pix_fmt" not in ffmpeg_params:
+        ffmpeg_params.extend(["-pix_fmt", "yuv420p"])
+    kwargs["ffmpeg_params"] = ffmpeg_params
+
     try:
         clip.write_videofile(output_file, codec=effective_codec, **kwargs)
         return effective_codec
