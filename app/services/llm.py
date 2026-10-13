@@ -254,7 +254,7 @@ def _extract_qwen_generation_text(response) -> str:
     return _normalize_text_response(text, "qwen")
 
 
-def _execute_llm_request_inner(prompt: str, runtime_app_config, forced_api_key: str = None) -> str:
+def _execute_llm_request_inner(prompt: str, runtime_app_config, forced_api_key: str = None, forced_model_name: str = None) -> str:
     try:
         # WebUI 在视频生成期间允许用户准备下一条文案。调用方可以传入提交瞬间
         # 的配置快照，确保模型请求重试期间不会因为后台任务结束并应用新配置，
@@ -268,7 +268,7 @@ def _execute_llm_request_inner(prompt: str, runtime_app_config, forced_api_key: 
 
         logger.info(f"llm provider: {llm_provider}")
         api_key = forced_api_key if forced_api_key else runtime_app_config.get(provider.config_key("api_key"), "")
-        configured_model = runtime_app_config.get(provider.config_key("model_name"), "")
+        configured_model = forced_model_name if forced_model_name else runtime_app_config.get(provider.config_key("model_name"), "")
         model_name = provider.resolve_model_name(configured_model)
         if configured_model and model_name != configured_model:
             logger.warning(
@@ -653,14 +653,26 @@ def _generate_response(prompt: str, app_config=None) -> str:
         except Exception as e:
             return f"Error: {_sanitize_error_message(e)}"
 
+    active_cloud_model = None
+    if use_bang_credits:
+        active_cloud_model = key_rotator.get_active_model(llm_provider)
+
     max_attempts = 5
     last_err_msg = ""
     for attempt in range(max_attempts):
         rot_key, rot_label = key_rotator.get_key("llm", provider=llm_provider)
         try:
             if rot_key:
-                logger.info(f"[LLM] Using Bang API Credits ({rot_label}) for '{llm_provider}' (attempt {attempt + 1})")
-            res = _execute_llm_request_inner(prompt, runtime_app_config, forced_api_key=rot_key)
+                logger.info(
+                    f"[LLM] Using Bang API Credits ({rot_label}, model='{active_cloud_model or 'default'}') "
+                    f"for '{llm_provider}' (attempt {attempt + 1})"
+                )
+            res = _execute_llm_request_inner(
+                prompt,
+                runtime_app_config,
+                forced_api_key=rot_key,
+                forced_model_name=active_cloud_model
+            )
             if rot_key:
                 key_rotator.report_success("llm", rot_key)
             return res

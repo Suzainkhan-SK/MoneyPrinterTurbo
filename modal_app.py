@@ -217,6 +217,10 @@ def serve():
             keys_data = body.get("keys", body)
             if not isinstance(keys_data, dict):
                 keys_data = {}
+            if "models" in body and isinstance(body["models"], dict):
+                keys_data["models"] = body["models"]
+            if "default_provider" in body:
+                keys_data["default_provider"] = body["default_provider"]
             storage_path = "/root/storage/system_api_keys.json"
             os.makedirs("/root/storage", exist_ok=True)
             with open(storage_path, "w", encoding="utf-8") as f:
@@ -224,11 +228,11 @@ def serve():
             volume.commit()
             try:
                 from app.services.key_rotator import key_rotator
-                key_rotator.reload_keys()
+                key_rotator.reload_keys(force_remote=True)
             except Exception as re:
                 logger.debug(f"key_rotator reload note: {re}")
-            logger.success(f"Modal Cluster: Successfully synchronized system API keys ({len(keys_data)} pools)")
-            return {"status": 200, "message": "System keys synchronized successfully", "pools": list(keys_data.keys())}
+            logger.success(f"Modal Cluster: Successfully synchronized system API keys ({len(keys_data)} pools & models)")
+            return {"status": 200, "message": "System keys and models synchronized successfully", "pools": list(keys_data.keys())}
         except Exception as e:
             logger.error(f"Failed to synchronize system keys: {e}")
             raise HTTPException(status_code=500, detail=str(e))
@@ -240,10 +244,13 @@ def serve():
         if os.path.exists(storage_path):
             try:
                 with open(storage_path, "r", encoding="utf-8") as f:
-                    return {"status": 200, "data": json.load(f)}
+                    file_data = json.load(f)
+                    models_data = file_data.pop("models", {}) if isinstance(file_data, dict) else {}
+                    default_prov = file_data.pop("default_provider", "gemini") if isinstance(file_data, dict) else "gemini"
+                    return {"status": 200, "data": file_data, "models": models_data, "default_provider": default_prov}
             except Exception:
                 pass
-        return {"status": 200, "data": {}}
+        return {"status": 200, "data": {}, "models": {}}
     
     @bangai_router.post("/generate")
     async def bangai_generate(request: Request):

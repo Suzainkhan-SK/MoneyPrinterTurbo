@@ -7896,7 +7896,7 @@ def _render_script_settings(panel, params):
         with st.container(border=True):
             st.write(tr("Video Script Settings"))
             if config.bangai_credits.get("use_bang_llm_credits", False):
-                st.info("⚡ **Bang API Credits Active**: High-retention video script and visual B-roll keywords will be generated using Bang AI's managed cloud LLM pool. No personal API key required.")
+                st.info("⚡ **Bang API Credits Active** (Personal key bypassed)")
             # 标签行需要容纳“配置大模型”入口，因此无法继续使用 text_area
             # 内置标签。把标签和输入框收进同一个字段容器后，可覆盖内部间距，
             # 同时让该字段与页面上的其它表单控件保持一致的外部节奏。
@@ -8108,7 +8108,7 @@ def _render_video_settings(panel, params):
         with st.container(border=True):
             st.write(tr("Video Settings"))
             if config.bangai_credits.get("use_bang_material_credits", False):
-                st.info("⚡ **Bang API Credits Active**: HD stock footage queries draw directly from Bang AI's load-balanced media key pool.")
+                st.info("⚡ **Bang API Credits Active** (Personal key bypassed)")
             video_concat_modes = [
                 (tr("Sequential"), "sequential"),
                 (tr("Random"), "random"),
@@ -9824,7 +9824,7 @@ def _render_audio_settings(panel, params):
         with st.container(border=True):
             st.write(tr("Audio Settings"))
             if config.bangai_credits.get("use_bang_voice_credits", False) or config.bangai_credits.get("use_bang_j2v_credits", False):
-                st.info("⚡ **Bang API Credits Active**: ElevenLabs Studio voices and cloud composition draw from Bang AI's managed audio pool.")
+                st.info("⚡ **Bang API Credits Active** (Personal key bypassed)")
 
             # 配音方式是音频设置的一级状态，负责明确区分自动配音、用户上传和无配音。
             # 旧配置没有 voice_mode 时，根据原 tts_server 的无配音哨兵保持兼容。
@@ -11412,18 +11412,19 @@ def _render_application():
         active_bang_credits.append("🎙️ Neural Voice & TTS")
 
     if active_bang_credits:
+        services_text = ' &nbsp;•&nbsp; '.join(active_bang_credits)
         st.markdown(
             f"""
-            <div style="background: linear-gradient(135deg, rgba(6, 182, 212, 0.12), rgba(59, 130, 246, 0.12)); border: 1.5px solid rgba(6, 182, 212, 0.4); border-radius: 12px; padding: 12px 18px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                    <span style="font-size: 20px;">⚡</span>
+            <div style="background: rgba(6, 182, 212, 0.09); border: 1.5px solid rgba(6, 182, 212, 0.45); border-radius: 10px; padding: 10px 16px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 17px;">⚡</span>
                     <div>
-                        <strong style="color: #06b6d4; font-size: 13.5px;">Bang API Credits Active:</strong>
-                        <span style="font-size: 13px; color: #f8fafc; margin-left: 6px;">{' &nbsp;•&nbsp; '.join(active_bang_credits)}</span>
+                        <strong style="color: #0284c7; font-size: 13px; font-weight: 800;">Bang API Credits Active:</strong>
+                        <span style="font-size: 13px; font-weight: 600; color: #0f172a; margin-left: 6px;">{services_text}</span>
                     </div>
                 </div>
-                <span style="background: rgba(6, 182, 212, 0.25); color: #06b6d4; border: 1px solid rgba(6, 182, 212, 0.5); padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 800;">
-                    MANAGED ZERO-DOWNTIME POOL
+                <span style="background: rgba(6, 182, 212, 0.18); color: #0284c7; border: 1px solid rgba(6, 182, 212, 0.45); padding: 2px 10px; border-radius: 16px; font-size: 11px; font-weight: 700; letter-spacing: 0.3px;">
+                    MANAGED POOL
                 </span>
             </div>
             """,

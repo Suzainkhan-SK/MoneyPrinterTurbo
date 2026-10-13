@@ -30,8 +30,27 @@ class KeyRotator:
         self._lock = threading.RLock()
         self._pools: Dict[str, List[dict]] = {}
         self._indices: Dict[str, int] = {}
+        self._models: Dict[str, str] = {
+            "gemini": "gemini-2.5-flash",
+            "openai": "gpt-4o",
+            "deepseek": "deepseek-chat",
+            "groq": "llama-3.3-70b-versatile"
+        }
         self._last_loaded = 0.0
         self.reload_keys()
+
+    def get_active_model(self, provider: str) -> Optional[str]:
+        """Returns the configured model name for this provider from the cloud control plane."""
+        with self._lock:
+            if not provider:
+                return None
+            return self._models.get(str(provider).lower().strip())
+
+    def set_active_model(self, provider: str, model_name: str):
+        """Sets the active model name for a provider."""
+        with self._lock:
+            if provider and model_name:
+                self._models[str(provider).lower().strip()] = str(model_name).strip()
 
     def reload_keys(self, force_remote: bool = False) -> bool:
         """Loads or reloads keys from remote Netlify control plane (Atlas) or local persistent volume."""
@@ -91,6 +110,8 @@ class KeyRotator:
                 resp_json = res.json()
                 data = resp_json.get("data")
                 if resp_json.get("success") and isinstance(data, dict):
+                    if resp_json.get("models") and isinstance(resp_json["models"], dict):
+                        data["models"] = resp_json["models"]
                     logger.info(f"[KeyRotator] Successfully fetched live system keys from Netlify ({len(data)} pools)")
                     return data
         except Exception as e:
@@ -108,6 +129,8 @@ class KeyRotator:
                     resp_json = res.json()
                     data = resp_json.get("data")
                     if isinstance(data, dict) and len(data) > 0:
+                        if resp_json.get("models") and isinstance(resp_json["models"], dict):
+                            data["models"] = resp_json["models"]
                         logger.info(f"[KeyRotator] Successfully fetched system keys from Modal endpoint {ep}")
                         return data
             except Exception as me:
@@ -118,7 +141,16 @@ class KeyRotator:
     def _apply_raw_pools(self, raw_data: dict):
         """Standardize raw key lists into structured pool items."""
         with self._lock:
+            # Apply configured models if present
+            models_dict = raw_data.get("models")
+            if isinstance(models_dict, dict):
+                for p, m in models_dict.items():
+                    if isinstance(m, str) and m.strip():
+                        self._models[p.lower().strip()] = m.strip()
+
             for provider, keys_raw in raw_data.items():
+                if provider == "models":
+                    continue
                 if not isinstance(keys_raw, list):
                     continue
                 pool_items = []
