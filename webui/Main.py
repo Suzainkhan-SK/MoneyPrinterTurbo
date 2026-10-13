@@ -3463,17 +3463,15 @@ def _render_task_video_preview():
                     key=f"restyle_font_{task_id}",
                 )
                 try:
-                    c_size_val = int(c_params.get("font_size", 55))
+                    c_size_val = int(c_params.get("font_size", 60))
                 except (TypeError, ValueError):
-                    c_size_val = 55
-                if c_size_val <= 28:
-                    c_size_val = 55
-                c_size_val = max(30, min(90, c_size_val))
+                    c_size_val = 60
+                c_size_val = max(30, min(100, c_size_val))
 
                 selected_size = st.slider(
                     tr("Font Size"),
                     min_value=30,
-                    max_value=90,
+                    max_value=100,
                     value=c_size_val,
                     key=f"restyle_size_{task_id}",
                 )
@@ -3495,105 +3493,69 @@ def _render_task_video_preview():
                 )
 
             with restyle_cols[1]:
-                # Text Color Selection without closing popover
-                TEXT_COLOR_PRESETS = [
-                    ("🟡 High-Vis Yellow", "#FFE600"),
-                    ("⚪ Crisp White", "#FFFFFF"),
-                    ("🟢 Electric Lime", "#00FF66"),
-                    ("🔵 Electric Cyan", "#00F0FF"),
-                    ("🟠 Sunset Orange", "#FF7700"),
-                    ("🔴 Crimson Red", "#FF2A2A"),
-                    ("🟣 Hot Pink", "#FF1493"),
-                    ("⚫ Solid Black", "#000000"),
-                    ("✏️ Custom Hex...", "custom"),
-                ]
-                raw_text_color = str(c_params.get("text_fore_color", "#FFE600") or "#FFE600").strip().upper()
+                raw_text_color = str(c_params.get("text_fore_color", "#FFE600") or "#FFE600").strip()
                 if not raw_text_color.startswith("#"):
                     raw_text_color = f"#{raw_text_color}"
-
-                matched_text_idx = next(
-                    (i for i, (_, hx) in enumerate(TEXT_COLOR_PRESETS) if hx.upper() == raw_text_color),
-                    len(TEXT_COLOR_PRESETS) - 1,
+                selected_color = st.color_picker(
+                    tr("Font Color"),
+                    value=raw_text_color,
+                    key=f"restyle_color_{task_id}",
                 )
-                chosen_text_label = st.selectbox(
-                    f"{tr('Text Color')} (Current: {raw_text_color})",
-                    options=[lbl for lbl, _ in TEXT_COLOR_PRESETS],
-                    index=matched_text_idx,
-                    key=f"restyle_text_col_select_{task_id}",
-                )
-                preset_text_val = dict(TEXT_COLOR_PRESETS).get(chosen_text_label, "#FFE600")
-                if preset_text_val == "custom":
-                    selected_color = st.text_input(
-                        tr("Custom Text Hex"),
-                        value=raw_text_color,
-                        key=f"restyle_custom_text_hex_{task_id}",
-                        help="Enter any 6-digit hex code e.g. #FFE600",
-                    ).strip()
-                    if not selected_color.startswith("#"):
-                        selected_color = f"#{selected_color}"
-                else:
-                    selected_color = preset_text_val
 
-                # Stroke / Outline Color Selection without closing popover
-                STROKE_COLOR_PRESETS = [
-                    ("⚫ Solid Black", "#000000"),
-                    ("⚪ Pure White", "#FFFFFF"),
-                    ("🔵 Dark Navy", "#0B192C"),
-                    ("🔴 Dark Crimson", "#4A0E17"),
-                    ("🟡 Dark Gold", "#7A5C00"),
-                    ("✏️ Custom Hex...", "custom"),
-                ]
-                raw_stroke_color = str(c_params.get("stroke_color", "#000000") or "#000000").strip().upper()
+                raw_stroke_color = str(c_params.get("stroke_color", "#000000") or "#000000").strip()
                 if not raw_stroke_color.startswith("#"):
                     raw_stroke_color = f"#{raw_stroke_color}"
-
-                matched_stroke_idx = next(
-                    (i for i, (_, hx) in enumerate(STROKE_COLOR_PRESETS) if hx.upper() == raw_stroke_color),
-                    len(STROKE_COLOR_PRESETS) - 1,
+                selected_outline_color = st.color_picker(
+                    tr("Stroke Color"),
+                    value=raw_stroke_color,
+                    key=f"restyle_stroke_col_{task_id}",
                 )
-                chosen_stroke_label = st.selectbox(
-                    f"{tr('Stroke Color')} (Current: {raw_stroke_color})",
-                    options=[lbl for lbl, _ in STROKE_COLOR_PRESETS],
-                    index=matched_stroke_idx,
-                    key=f"restyle_stroke_col_select_{task_id}",
-                )
-                preset_stroke_val = dict(STROKE_COLOR_PRESETS).get(chosen_stroke_label, "#000000")
-                if preset_stroke_val == "custom":
-                    selected_outline_color = st.text_input(
-                        tr("Custom Stroke Hex"),
-                        value=raw_stroke_color,
-                        key=f"restyle_custom_stroke_hex_{task_id}",
-                        help="Enter any 6-digit hex code e.g. #000000",
-                    ).strip()
-                    if not selected_outline_color.startswith("#"):
-                        selected_outline_color = f"#{selected_outline_color}"
-                else:
-                    selected_outline_color = preset_stroke_val
 
                 try:
                     c_width_val = float(c_params.get("stroke_width", 2.5))
                 except (TypeError, ValueError):
                     c_width_val = 2.5
-                c_width_val = max(0.0, min(6.0, c_width_val))
+                c_width_val = max(0.0, min(10.0, c_width_val))
 
                 selected_outline_width = st.slider(
                     tr("Stroke Width"),
                     min_value=0.0,
-                    max_value=6.0,
+                    max_value=10.0,
                     value=c_width_val,
                     step=0.5,
                     key=f"restyle_outline_width_{task_id}",
                 )
 
-                st.markdown(
-                    f"""
-                    <div style="display:flex;align-items:center;gap:10px;margin-top:2px;padding:5px 8px;background:rgba(128,128,128,0.1);border-radius:6px;border:1px solid rgba(128,128,128,0.2);">
-                      <span style="display:inline-block;width:14px;height:14px;background-color:{selected_color};border-radius:3px;border:1px solid #777;"></span>
-                      <span style="font-size:13px;font-weight:700;color:{selected_color};text-shadow:1px 1px 2px {selected_outline_color};">Sample Subtitle Style</span>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
+            # Subtitle Background Toggle and Color
+            bg_cols = st.columns([0.5, 0.5])
+            curr_bg_enabled = bool(c_params.get("text_background_color") or c_params.get("subtitle_background_enabled", False))
+            curr_bg_color = str(c_params.get("subtitle_background_color", "#000000") or "#000000").strip()
+            if not curr_bg_color.startswith("#"):
+                curr_bg_color = f"#{curr_bg_color}"
+
+            with bg_cols[0]:
+                selected_bg_enabled = st.checkbox(
+                    tr("Enable Subtitle Background"),
+                    value=curr_bg_enabled,
+                    key=f"restyle_bg_enabled_{task_id}",
                 )
+            with bg_cols[1]:
+                selected_bg_color = st.color_picker(
+                    tr("Background Color"),
+                    value=curr_bg_color,
+                    key=f"restyle_bg_col_{task_id}",
+                    disabled=not selected_bg_enabled,
+                )
+
+            bg_style = f"background-color:{selected_bg_color};" if selected_bg_enabled else "background:rgba(128,128,128,0.1);"
+            st.markdown(
+                f"""
+                <div style="display:flex;align-items:center;gap:10px;margin-top:2px;padding:6px 10px;border-radius:6px;border:1px solid rgba(128,128,128,0.2);{bg_style}">
+                  <span style="font-size:14px;font-weight:700;color:{selected_color};text-shadow:1px 1px 2px {selected_outline_color};">Sample Subtitle Style</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
             sub_content = ""
             try:
@@ -3641,6 +3603,7 @@ def _render_task_video_preview():
                                     sub_maker=new_sub_maker,
                                     subtitle_file=subtitle_path,
                                     word_level=is_word_level,
+                                    video_file=combined_path,
                                 )
                                 try:
                                     with open(subtitle_path, "r", encoding="utf-8") as sf:
@@ -3662,6 +3625,8 @@ def _render_task_video_preview():
                             outline_color=selected_outline_color,
                             outline_width=selected_outline_width,
                             position=selected_pos,
+                            bg_enabled=selected_bg_enabled,
+                            bg_color=selected_bg_color,
                             updated_subtitles_text=edited_subs,
                             voice_name=selected_voice,
                             voice_rate=selected_rate,
@@ -3686,6 +3651,9 @@ def _render_task_video_preview():
                                     sparams["stroke_color"] = selected_outline_color
                                     sparams["stroke_width"] = selected_outline_width
                                     sparams["subtitle_position"] = selected_pos
+                                    sparams["text_background_color"] = selected_bg_color if selected_bg_enabled else False
+                                    sparams["subtitle_background_enabled"] = selected_bg_enabled
+                                    sparams["subtitle_background_color"] = selected_bg_color
                                     with open(script_file, "w", encoding="utf-8") as sf:
                                         json.dump(sdata, sf, ensure_ascii=False, indent=2)
                             except Exception as e:

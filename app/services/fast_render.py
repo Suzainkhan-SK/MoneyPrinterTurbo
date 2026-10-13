@@ -42,6 +42,32 @@ def srt_time_to_ass(srt_time: str) -> str:
     return f"{hours}:{mins:02d}:{secs:02d}.{cs:02d}"
 
 
+def resolve_ass_font_family(font_name: str) -> str:
+    """Resolve font file name (e.g. Nirmala.ttc) to true ASS font family name (e.g. Nirmala UI)."""
+    if not font_name:
+        return "Nirmala UI"
+    fp = os.path.join(utils.font_dir(), font_name)
+    if os.path.isfile(fp):
+        try:
+            from PIL import ImageFont
+            return ImageFont.truetype(fp, 20).getname()[0]
+        except Exception:
+            pass
+    clean = os.path.splitext(font_name)[0]
+    clean_lower = clean.lower()
+    if "nirmala" in clean_lower:
+        return "Nirmala UI"
+    elif "yahei" in clean_lower:
+        return "Microsoft YaHei"
+    elif "vietnam" in clean_lower:
+        return "Be Vietnam Pro"
+    elif "charm" in clean_lower:
+        return "Charm"
+    elif "heiti" in clean_lower:
+        return "Heiti TC"
+    return clean
+
+
 def convert_srt_to_ass(
     srt_path: str,
     ass_path: str,
@@ -53,6 +79,9 @@ def convert_srt_to_ass(
     outline_color: str,
     outline_width: float,
     position: str = "bottom",
+    custom_position: float = 70.0,
+    bg_enabled: bool = False,
+    bg_color: str = "#000000",
 ) -> bool:
     try:
         with open(srt_path, "r", encoding="utf-8") as f:
@@ -72,33 +101,35 @@ def convert_srt_to_ass(
                     text = "\\N".join(text_lines)
                     dialogues.append(f"Dialogue: 0,{start_ass},{end_ass},Default,,0,0,0,,{text}")
 
-        primary_ass = hex_to_ass_color(text_color, "&H000DDDDE")
+        primary_ass = hex_to_ass_color(text_color, "&H00FFFFFF")
         outline_ass = hex_to_ass_color(outline_color, "&H00000000")
+        back_ass = hex_to_ass_color(bg_color, "&H00000000")
 
         pos_lower = position.lower()
         if pos_lower == "top":
             align = 8
-            margin_v = int(video_height * 0.08)
+            margin_v = int(video_height * 0.05)
         elif pos_lower == "center":
             align = 5
             margin_v = 0
         elif pos_lower in ("two_thirds_bottom", "two-thirds", "two_thirds", "2/3_bottom", "2/3"):
             align = 8
-            margin_v = int(video_height * 0.33)
+            margin_v = int(video_height / 3.0)
+        elif pos_lower == "custom":
+            align = 8
+            margin_v = int(video_height * (max(0.0, min(100.0, float(custom_position))) / 100.0))
         else:  # bottom
             align = 2
-            margin_v = int(video_height * 0.10)
+            margin_v = int(video_height * 0.05)
 
-        margin_lr = int(video_width * 0.07)
+        margin_lr = int(video_width * 0.05)
 
-        # Normalize font size to video resolution
-        scaled_font_size = int(font_size)
-        if scaled_font_size <= 28:
-            scaled_font_size = 55
-        scaled_font_size = max(20, min(int(video_height * 0.08), scaled_font_size))
-
-        base_dim = min(video_width, video_height)
-        scaled_outline = max(1.0, float(outline_width) * (base_dim / 720.0))
+        # Match MoviePy / Pillow pixel font sizing:
+        # Pillow renders at 96 DPI pixel scale; libass renders ASS at 72 DPI point scale.
+        # Factor is exactly 1.20 to achieve 1:1 pixel rendering parity.
+        scaled_font_size = max(18, round(float(font_size) * 1.20))
+        scaled_outline = max(0.0, float(outline_width))
+        border_style = 3 if bg_enabled else 1
 
         ass_content = f"""[Script Info]
 Title: MoneyPrinterTurbo Fast Restyle
@@ -110,7 +141,7 @@ PlayResY: {video_height}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{scaled_font_size},{primary_ass},&H000000FF,{outline_ass},&H00000000,1,0,0,0,100,100,0,0,1,{scaled_outline:.1f},1.5,{align},{margin_lr},{margin_lr},{margin_v},1
+Style: Default,{font_name},{scaled_font_size},{primary_ass},&H000000FF,{outline_ass},{back_ass},1,0,0,0,100,100,0,0,{border_style},{scaled_outline:.1f},1.0,{align},{margin_lr},{margin_lr},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -127,11 +158,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 def fast_restyle_task(
     task_path: str,
     font_name: str = "Noto Sans Devanagari",
-    font_size: int = 55,
-    text_color: str = "#ddde0d",
+    font_size: int = 60,
+    text_color: str = "#FFE600",
     outline_color: str = "#000000",
     outline_width: float = 2.5,
     position: str = "bottom",
+    custom_position: float = 70.0,
+    bg_enabled: bool = False,
+    bg_color: str = "#000000",
     updated_subtitles_text: str | None = None,
     voice_name: str | None = None,
     voice_rate: float | None = None,
@@ -175,24 +209,14 @@ def fast_restyle_task(
         except Exception as e:
             logger.warning(f"failed to update subtitle.srt: {e}")
 
-    # Resolve font family
-    font_family = font_name
-    if font_name.endswith(".ttf") or font_name.endswith(".ttc"):
-        font_family = os.path.splitext(font_name)[0]
-    
-    # Handle known font mappings
-    if "nirmala" in font_family.lower():
-        font_family = "Nirmala"
-    elif "noto" in font_family.lower() and "deva" in font_family.lower():
-        font_family = "Noto Sans Devanagari"
-    elif "yahei" in font_family.lower():
-        font_family = "Microsoft YaHei"
+    # Resolve true font family name from font file for exact libass matching
+    font_family = resolve_ass_font_family(font_name)
 
     fonts_dir = utils.font_dir()
     escaped_fonts_dir = fonts_dir.replace("\\", "/").replace(":", "\\:")
     escaped_sub = subtitle_srt.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
 
-    primary_ass = hex_to_ass_color(text_color, "&H000DDDDE")
+    primary_ass = hex_to_ass_color(text_color, "&H00FFFFFF")
     outline_ass = hex_to_ass_color(outline_color, "&H00000000")
 
     # Alignment and margins fallback
@@ -204,15 +228,14 @@ def fast_restyle_task(
         align = 5
         margin_v = 10
     elif pos_lower in ("two_thirds_bottom", "two-thirds", "2/3"):
-        align = 2
+        align = 8
         margin_v = 120
+    elif pos_lower == "custom":
+        align = 8
+        margin_v = int(1920 * (max(0.0, min(100.0, float(custom_position))) / 100.0))
     else:  # bottom
         align = 2
         margin_v = 35
-
-    # Safe font size and outline for fallback
-    safe_font_size = max(16, min(40, int(font_size)))
-    safe_outline = max(0.0, min(8.0, float(outline_width)))
 
     # Determine video dimensions and duration
     video_width = 1080
@@ -241,6 +264,9 @@ def fast_restyle_task(
         outline_color=outline_color,
         outline_width=outline_width,
         position=position,
+        custom_position=custom_position,
+        bg_enabled=bg_enabled,
+        bg_color=bg_color,
     )
 
     if ass_converted and os.path.isfile(ass_file):
@@ -248,11 +274,12 @@ def fast_restyle_task(
         sub_filter = f",subtitles='{escaped_ass}':fontsdir='{escaped_fonts_dir}'"
     else:
         # Fallback to SRT if ASS conversion fails
+        scaled_safe_fs = max(18, round(float(font_size) * 1.20))
         sub_filter = (
             f",subtitles='{escaped_sub}':fontsdir='{escaped_fonts_dir}':force_style='"
-            f"FontName={font_family},FontSize={safe_font_size},Bold=1,"
+            f"FontName={font_family},FontSize={scaled_safe_fs},Bold=1,"
             f"PrimaryColour={primary_ass},OutlineColour={outline_ass},"
-            f"BorderStyle=1,Outline={safe_outline},Shadow=1,Alignment={align},MarginV={margin_v}'"
+            f"BorderStyle=1,Outline={outline_width:.1f},Shadow=1,Alignment={align},MarginV={margin_v}'"
         )
 
     temp_final = os.path.join(task_path, "final-restyle-temp.mp4")
