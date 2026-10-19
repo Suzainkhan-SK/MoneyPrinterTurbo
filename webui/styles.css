@@ -179,7 +179,8 @@ div[class*="st-key-video_subject_field"] [data-testid="stTooltipIcon"] {
     cursor: pointer !important;
     margin-left: auto !important;
     box-shadow: 0 1px 2px rgba(32, 21, 21, 0.05) !important;
-    transition: all 0.15s ease !important;
+    transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.16s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.16s ease, border-color 0.16s ease !important;
+    will-change: transform !important;
     white-space: nowrap !important;
 }
 
@@ -197,14 +198,16 @@ div[class*="st-key-video_subject_field"] [data-testid="stTooltipIcon"] {
     background-color: #f2eee8 !important;
     border-color: #8c887b !important;
     color: #000000 !important;
-    box-shadow: 0 2px 5px rgba(32, 21, 21, 0.1) !important;
-    transform: translateY(-0.5px) !important;
+    box-shadow: 0 4px 10px rgba(32, 21, 21, 0.12) !important;
+    transform: translateY(-1.5px) !important;
 }
 
 .st-key-open_llm_settings_from_subject button:active {
     background-color: #eae5dc !important;
     border-color: #7a766a !important;
-    transform: translateY(0) !important;
+    transform: translateY(0.5px) scale(0.98) !important;
+    box-shadow: 0 1px 2px rgba(32, 21, 21, 0.08) !important;
+    transition: transform 0.06s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.06s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -221,7 +224,12 @@ div[class*="st-key-video_subject_field"] [data-testid="stTooltipIcon"] {
         background-color: #332727 !important;
         border-color: rgba(255, 255, 255, 0.3) !important;
         color: #ffffff !important;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45) !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45) !important;
+        transform: translateY(-1.5px) !important;
+    }
+    .st-key-open_llm_settings_from_subject button:active {
+        transform: translateY(0.5px) scale(0.98) !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
     }
 }
 
@@ -1293,6 +1301,151 @@ div[class*="st-key-top_studio_switcher"] {
         padding: 5px 10px !important;
         font-size: 11.5px !important;
     }
+}
+
+/* ───────────────────────────────────────────────────────────────────────── */
+/* BangAI Stock Studio - Ultra-Smooth Button & Hover Micro-Interactions     */
+/* ───────────────────────────────────────────────────────────────────────── */
+
+/* 1. Global Interactive Elements Foundation */
+div[data-testid="stButton"] button,
+button[kind="primary"],
+button[kind="secondary"],
+[data-testid="baseButton-primary"],
+[data-testid="baseButton-secondary"],
+[data-testid="stBaseButton-primary"],
+[data-testid="stBaseButton-secondary"],
+div[data-testid="stFormSubmitButton"] button,
+div[data-testid="stDownloadButton"] button,
+div[data-testid="stPopover"] > button,
+a[data-testid="stLinkButton"],
+.st-key-open_automation_dialog_button button,
+.st-key-open_settings_dialog_button button,
+.st-key-open_llm_settings_from_subject button,
+div[class*="st-key-open_voice_settings_btn"] button {
+    cursor: pointer !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: transparent !important;
+    transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1),
+                box-shadow 0.16s cubic-bezier(0.16, 1, 0.3, 1),
+                background-color 0.16s ease,
+                border-color 0.16s ease,
+                filter 0.16s ease !important;
+    will-change: transform !important;
+    position: relative !important;
+}
+
+/* 2. Secondary & General Buttons (Hover & Click State) */
+div[data-testid="stButton"] button:not([kind="primary"]),
+button[kind="secondary"],
+[data-testid="baseButton-secondary"],
+[data-testid="stBaseButton-secondary"],
+div[data-testid="stPopover"] > button,
+a[data-testid="stLinkButton"],
+.st-key-open_automation_dialog_button button,
+.st-key-open_settings_dialog_button button,
+.st-key-open_llm_settings_from_subject button,
+div[class*="st-key-open_voice_settings_btn"] button {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+}
+
+div[data-testid="stButton"] button:not([kind="primary"]):hover,
+button[kind="secondary"]:hover,
+[data-testid="baseButton-secondary"]:hover,
+[data-testid="stBaseButton-secondary"]:hover,
+div[data-testid="stPopover"] > button:hover,
+a[data-testid="stLinkButton"]:hover,
+.st-key-open_automation_dialog_button button:hover,
+.st-key-open_settings_dialog_button button:hover,
+.st-key-open_llm_settings_from_subject button:hover,
+div[class*="st-key-open_voice_settings_btn"] button:hover {
+    transform: translateY(-1.5px) !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.09), 0 2px 4px rgba(0, 0, 0, 0.04) !important;
+    filter: brightness(1.02) !important;
+}
+
+div[data-testid="stButton"] button:not([kind="primary"]):active,
+button[kind="secondary"]:active,
+[data-testid="baseButton-secondary"]:active,
+[data-testid="stBaseButton-secondary"]:active,
+div[data-testid="stPopover"] > button:active,
+a[data-testid="stLinkButton"]:active,
+.st-key-open_automation_dialog_button button:active,
+.st-key-open_settings_dialog_button button:active,
+.st-key-open_llm_settings_from_subject button:active,
+div[class*="st-key-open_voice_settings_btn"] button:active {
+    transform: translateY(0.75px) scale(0.985) !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1) !important;
+    transition: transform 0.06s cubic-bezier(0.2, 0.8, 0.2, 1),
+                box-shadow 0.06s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+    filter: brightness(0.96) !important;
+}
+
+/* 3. Primary Call-To-Action Buttons (⚡ Generate Video, ⚡ Run Today's Topic, Save) */
+div[data-testid="stButton"] button[kind="primary"],
+button[kind="primary"],
+[data-testid="baseButton-primary"],
+[data-testid="stBaseButton-primary"],
+div[data-testid="stFormSubmitButton"] button[kind="primary"],
+div[class*="st-key-generate_video_button"] button,
+div[class*="st-key-run_now_automation_btn"] button,
+div[class*="st-key-save_automation_btn"] button {
+    box-shadow: 0 2px 8px rgba(255, 75, 75, 0.22), 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+}
+
+div[data-testid="stButton"] button[kind="primary"]:hover,
+button[kind="primary"]:hover,
+[data-testid="baseButton-primary"]:hover,
+[data-testid="stBaseButton-primary"]:hover,
+div[data-testid="stFormSubmitButton"] button[kind="primary"]:hover,
+div[class*="st-key-generate_video_button"] button:hover,
+div[class*="st-key-run_now_automation_btn"] button:hover,
+div[class*="st-key-save_automation_btn"] button:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 20px rgba(255, 75, 75, 0.38), 0 2px 6px rgba(0, 0, 0, 0.12) !important;
+    filter: brightness(1.05) !important;
+}
+
+div[data-testid="stButton"] button[kind="primary"]:active,
+button[kind="primary"]:active,
+[data-testid="baseButton-primary"]:active,
+[data-testid="stBaseButton-primary"]:active,
+div[data-testid="stFormSubmitButton"] button[kind="primary"]:active,
+div[class*="st-key-generate_video_button"] button:active,
+div[class*="st-key-run_now_automation_btn"] button:active,
+div[class*="st-key-save_automation_btn"] button:active {
+    transform: translateY(0.75px) scale(0.98) !important;
+    box-shadow: 0 2px 6px rgba(255, 75, 75, 0.25) !important;
+    transition: transform 0.06s cubic-bezier(0.2, 0.8, 0.2, 1),
+                box-shadow 0.06s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+    filter: brightness(0.95) !important;
+}
+
+/* 4. Streamlit Tabs Smooth Micro-Hover & Click */
+button[data-testid="stTab"],
+div[data-testid="stTab"] button,
+[data-testid="stTab"] {
+    transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    cursor: pointer !important;
+}
+button[data-testid="stTab"]:hover,
+div[data-testid="stTab"] button:hover {
+    transform: translateY(-1px) !important;
+}
+button[data-testid="stTab"]:active,
+div[data-testid="stTab"] button:active {
+    transform: scale(0.97) !important;
+}
+
+/* 5. Tooltip icon (?) safety reset - keep clean */
+[data-testid="stTooltipIcon"] button,
+button[data-testid="stTooltipHoverTarget"] {
+    transform: none !important;
+    box-shadow: none !important;
+    filter: none !important;
+    background: transparent !important;
 }
 
 

@@ -4635,18 +4635,37 @@ def _render_generation_task_snapshot(task_id, task):
         player_cols = st.columns(len(video_files) * 2 + 1)
         for i, url in enumerate(video_files):
             with player_cols[i * 2 + 1]:
-                if getattr(st, "__class__", None) and st.__class__.__name__ == "FakeStreamlit":
-                    st.video(url)
-                else:
+                # Modal Cloud HTTP 206 Partial Content range-streaming URL
+                # Avoids loading 40MB raw bytes into memory which fails on reverse-proxy
+                stream_url = ""
+                if task_id:
+                    fname = os.path.basename(url) or "final-1.mp4"
+                    stream_url = f"https://cmpunktg--bangai-stock-studio-serve.modal.run/api/bangai/download/{task_id}/{fname}"
+
+                played = False
+                if stream_url:
+                    try:
+                        st.video(stream_url)
+                        played = True
+                    except Exception:
+                        played = False
+
+                if not played:
                     if os.path.isfile(url):
                         try:
-                            with open(url, "rb") as vf:
-                                st.video(vf.read())
-                        except Exception:
                             st.video(url)
-                    else:
-                        st.video(url)
-                if not os.path.isfile(url):
+                            played = True
+                        except Exception:
+                            try:
+                                with open(url, "rb") as vf:
+                                    st.video(vf.read())
+                                played = True
+                            except Exception:
+                                pass
+                if not played:
+                    st.video(url)
+
+                if not os.path.isfile(url) and not stream_url:
                     logger.warning(
                         f"generated video is unavailable for download: "
                         f"task_id={task_id}, video_file={url}"
@@ -4663,15 +4682,24 @@ def _render_generation_task_snapshot(task_id, task):
                 )
                 snap_btn_cols = st.columns(2)
                 with snap_btn_cols[0]:
-                    with open(url, "rb") as video_file:
-                        st.download_button(
+                    if os.path.isfile(url):
+                        with open(url, "rb") as video_file:
+                            st.download_button(
+                                download_label,
+                                data=video_file,
+                                file_name=download_name,
+                                mime=mimetypes.guess_type(url)[0] or "video/mp4",
+                                key=f"download_generated_video_{task_id}_{i}",
+                                icon=":material/download:",
+                                on_click="ignore",
+                                use_container_width=True,
+                            )
+                    elif stream_url:
+                        st.link_button(
                             download_label,
-                            data=video_file,
-                            file_name=download_name,
-                            mime=mimetypes.guess_type(url)[0] or "video/mp4",
-                            key=f"download_generated_video_{task_id}_{i}",
+                            stream_url,
+                            key=f"download_generated_video_link_{task_id}_{i}",
                             icon=":material/download:",
-                            on_click="ignore",
                             use_container_width=True,
                         )
 
@@ -4693,7 +4721,20 @@ def _render_generation_task_snapshot(task_id, task):
                                         task_meta = json.load(f)
                                 except Exception:
                                     pass
-                        yt_url = task_meta.get("youtube_url") or task.get("youtube_url")
+
+                        yt_url = task_meta.get("youtube_url") or task.get("youtube_url") or ""
+                        if not yt_url:
+                            snap_task_path = task.get("task_path") or os.path.dirname(url)
+                            params_file = os.path.join(snap_task_path, "params.json")
+                            if os.path.isfile(params_file):
+                                try:
+                                    import json
+                                    with open(params_file, "r", encoding="utf-8") as pf:
+                                        p_data = json.load(pf)
+                                        yt_url = p_data.get("youtube_url") or ""
+                                except Exception:
+                                    pass
+
                         if yt_url:
                             if hasattr(st, "link_button"):
                                 st.link_button(

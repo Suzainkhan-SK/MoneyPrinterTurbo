@@ -213,20 +213,53 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
                         "privacyStatus": params_dict.get("youtube_privacy", "public"),
                         "webhookSecret": "s-vshorts-sec-9a8b7c6d5e4f3a2b1c0"
                     }
-                    yt_res = requests.post(yt_webhook, json=yt_payload, timeout=30)
+                    yt_res = requests.post(yt_webhook, json=yt_payload, timeout=45)
                     logger.info(f"Modal Worker: YouTube auto-upload status for {task_id}: {yt_res.status_code}")
                     
                     yt_video_url = ""
                     try:
-                        if yt_res.status_code == 200:
-                            y_data = yt_res.json()
-                            yt_video_url = y_data.get("videoUrl") or y_data.get("url") or (f"https://youtube.com/shorts/{y_data.get('videoId')}" if y_data.get("videoId") else "")
-                    except Exception:
-                        pass
+                        y_data = yt_res.json()
+                        if isinstance(y_data, list) and len(y_data) > 0:
+                            y_data = y_data[0]
+                        if isinstance(y_data, dict):
+                            if "json" in y_data and isinstance(y_data["json"], dict):
+                                y_data = y_data["json"]
+                            vid_id = y_data.get("videoId") or y_data.get("id")
+                            if not vid_id and isinstance(y_data.get("snippet"), dict):
+                                vid_id = y_data.get("snippet", {}).get("resourceId", {}).get("videoId")
+                            yt_video_url = y_data.get("videoUrl") or y_data.get("url") or (f"https://youtube.com/shorts/{vid_id}" if vid_id else "")
+                    except Exception as parse_err:
+                        logger.warning(f"Failed to parse n8n response: {parse_err}")
+
                     if not yt_video_url and yt_res.text:
                         yt_match = re.search(r'https?://[^\s"\'<>]+(?:youtu\.be|youtube\.com)[^\s"\'<>]*', yt_res.text)
                         if yt_match:
                             yt_video_url = yt_match.group(0)
+                        else:
+                            id_match = re.search(r'["\'](?:videoId|id)["\']\s*:\s*["\']([a-zA-Z0-9_-]{11})["\']', yt_res.text)
+                            if id_match:
+                                yt_video_url = f"https://youtube.com/shorts/{id_match.group(1)}"
+
+                    # Reliable fallback: query YouTube channel directly to get the uploaded short URL
+                    if not yt_video_url and params_dict.get("user_youtube_access_token"):
+                        try:
+                            ch_id = params_dict.get("user_youtube_channel_id", "")
+                            yt_api_url = "https://www.googleapis.com/youtube/v3/search?part=snippet&order=date&type=video&maxResults=3"
+                            if ch_id:
+                                yt_api_url += f"&channelId={ch_id}"
+                            q_res = requests.get(yt_api_url, headers={"Authorization": f"Bearer {params_dict.get('user_youtube_access_token')}"}, timeout=10)
+                            if q_res.status_code == 200:
+                                items = q_res.json().get("items", [])
+                                for item in items:
+                                    v_title = item.get("snippet", {}).get("title", "")
+                                    v_id = item.get("id", {}).get("videoId")
+                                    if v_id and (v_title.lower() in subj.lower() or subj.lower() in v_title.lower()):
+                                        yt_video_url = f"https://youtube.com/shorts/{v_id}"
+                                        break
+                                if not yt_video_url and items and items[0].get("id", {}).get("videoId"):
+                                    yt_video_url = f"https://youtube.com/shorts/{items[0]['id']['videoId']}"
+                        except Exception as q_err:
+                            logger.warning(f"YouTube search fallback error: {q_err}")
 
                     task_state_payload["youtube_url"] = yt_video_url
                     task_state_payload["youtube_channel_title"] = params_dict.get("user_youtube_channel_title", "")
@@ -422,6 +455,10 @@ def serve():
 
             subject = params.get("video_subject") or script_data.get("script", "")[:45] or state_data.get("video_subject") or f"Stock Studio Video #{task_id[:8]}"
 
+            yt_url = state_data.get("youtube_url") or params.get("youtube_url") or ""
+            yt_ch_title = state_data.get("youtube_channel_title") or params.get("user_youtube_channel_title") or ""
+            yt_ch_id = state_data.get("youtube_channel_id") or params.get("user_youtube_channel_id") or ""
+
             tasks_list.append({
                 "id": task_id,
                 "task_id": task_id,
@@ -434,10 +471,10 @@ def serve():
                 "failedStage": state_data.get("failed_stage", ""),
                 "videoUrl": video_url,
                 "videos": [video_url] if video_url else [],
-                "youtube_url": state_data.get("youtube_url") or params.get("youtube_url") or "",
-                "youtubeUrl": state_data.get("youtube_url") or params.get("youtube_url") or "",
-                "youtube_channel_title": state_data.get("youtube_channel_title") or params.get("user_youtube_channel_title") or "",
-                "youtube_channel_id": state_data.get("youtube_channel_id") or params.get("user_youtube_channel_id") or "",
+                "youtube_url": yt_url,
+                "youtubeUrl": yt_url,
+                "youtube_channel_title": yt_ch_title,
+                "youtube_channel_id": yt_ch_id,
                 "createdAt": created_iso,
                 "mtime": mtime,
                 "creditMode": "bang_credits" if is_bang_credits else "byok",
