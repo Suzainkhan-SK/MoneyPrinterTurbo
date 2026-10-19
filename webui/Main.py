@@ -3603,7 +3603,6 @@ def _render_task_video_preview():
                                     sub_maker=new_sub_maker,
                                     subtitle_file=subtitle_path,
                                     word_level=is_word_level,
-                                    video_file=combined_path,
                                 )
                                 try:
                                     with open(subtitle_path, "r", encoding="utf-8") as sf:
@@ -4042,14 +4041,17 @@ def _open_automation_dialog():
 
 def _fetch_stock_studio_automation(user_email, user_id="", token=""):
     """Fetch automation config from Netlify backend or fall back to local config."""
+    import urllib.parse
     try:
-        url = f"https://bangai.netlify.app/.netlify/functions/stock-studio-automation?email={requests.utils.quote(user_email)}&userId={requests.utils.quote(user_id)}"
+        clean_email = urllib.parse.quote(str(user_email or "").strip())
+        clean_uid = urllib.parse.quote(str(user_id or "").strip())
+        url = f"https://bangai.netlify.app/.netlify/functions/stock-studio-automation?email={clean_email}&userId={clean_uid}"
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         resp = requests.get(url, headers=headers, timeout=8)
         if resp.status_code == 200:
             return resp.json()
-    except Exception as e:
-        logger.warning(f"[_fetch_stock_studio_automation] Error: {e}")
+    except Exception as exc:
+        logger.warning(f"[_fetch_stock_studio_automation] Error: {exc}")
     return {"success": False, "automation": None, "channels": []}
 
 
@@ -4063,9 +4065,10 @@ def _save_stock_studio_automation(payload, token=""):
         resp = requests.post(url, json=payload, headers=headers, timeout=12)
         if resp.status_code == 200:
             return resp.json()
-    except Exception as e:
-        logger.warning(f"[_save_stock_studio_automation] Error: {e}")
-    return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as exc:
+        logger.warning(f"[_save_stock_studio_automation] Error: {exc}")
+        return {"success": False, "error": str(exc)}
 
 
 def _render_brand(available_update: str | None = None):
@@ -5983,14 +5986,14 @@ def _render_automation_dialog():
                 if toggle_res.get("success"):
                     st.session_state["automation_data"]["status"] = toggle_res.get("status")
                     st.toast("Autopilot paused.")
-                    st.rerun(scope="fragment")
+                    st.rerun()
         else:
             if st.button("▶️ Activate 24h Autopilot", type="primary", use_container_width=True, key="toggle_auto_btn"):
                 toggle_res = _save_stock_studio_automation({"action": "toggle", "email": user_email, "userId": current_uid}, token)
                 if toggle_res.get("success"):
                     st.session_state["automation_data"]["status"] = toggle_res.get("status")
                     st.toast("⚡ Autopilot activated!")
-                    st.rerun(scope="fragment")
+                    st.rerun()
 
     with btn_col2:
         if st.button("⚡ Run Today's Topic Now", type="secondary", use_container_width=True, key="run_now_auto_btn"):
@@ -6050,7 +6053,7 @@ def _render_automation_dialog():
             if s not in cur_t:
                 cur_t.append(s)
         st.session_state["auto_topics_input"] = "\n".join(cur_t)
-        st.rerun(scope="fragment")
+        st.rerun()
 
     topics_val = st.text_area(
         "Upcoming Topics",
