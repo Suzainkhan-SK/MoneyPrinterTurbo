@@ -157,6 +157,12 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
     config.switch_user_config(user_id)
     
     task_dir = utils.task_dir(task_id)
+    os.makedirs(task_dir, exist_ok=True)
+    
+    # Persist input settings and parameters for task auditing & Admin Panel inspection
+    params_file = f"{task_dir}/params.json"
+    with open(params_file, "w", encoding="utf-8") as pf:
+        json.dump(params_dict, pf, default=str)
     
     state_file = f"{task_dir}/state.json"
     with open(state_file, "w", encoding="utf-8") as f:
@@ -171,6 +177,7 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
         final_video = f"{task_dir}/final-1.mp4"
         if os.path.exists(final_video):
             logger.success(f"Modal Worker: Task {task_id} completed successfully")
+            final_dl_url = f"https://cmpunktg--bangai-stock-studio-serve.modal.run/api/bangai/download/{task_id}/final-1.mp4"
             with open(state_file, "w", encoding="utf-8") as f:
                 json.dump({
                     "state": "complete",
@@ -178,6 +185,32 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
                     "task_id": task_id,
                     "video_url": f"/api/bangai/download/{task_id}/final-1.mp4"
                 }, f)
+            
+            # Autopilot: Automatic YouTube Upload if enabled
+            if params_dict.get("auto_upload_youtube") and params_dict.get("user_youtube_access_token"):
+                try:
+                    import requests
+                    yt_webhook = params_dict.get("youtube_webhook_url") or "https://cmpunktg29.app.n8n.cloud/webhook/viral-shorts-ai-youtube-upload"
+                    subj = params_dict.get("video_subject") or "Viral Stock Studio Short"
+                    logger.info(f"Modal Worker: Auto-uploading video {task_id} ('{subj}') to YouTube...")
+                    yt_payload = {
+                        "videoUrl": final_dl_url,
+                        "title": subj[:95],
+                        "description": f"{subj}\n\nRendered automatically with BangAI Stock Studio Autopilot.\n#shorts #viral",
+                        "tags": ["shorts", "viral", "ai", "stockstudio"],
+                        "googleAccessToken": params_dict.get("user_youtube_access_token"),
+                        "userYouTubeAccessToken": params_dict.get("user_youtube_access_token"),
+                        "channelId": params_dict.get("user_youtube_channel_id", ""),
+                        "channelTitle": params_dict.get("user_youtube_channel_title", ""),
+                        "userYouTubeChannelTitle": params_dict.get("user_youtube_channel_title", ""),
+                        "userYouTubeChannelId": params_dict.get("user_youtube_channel_id", ""),
+                        "privacyStatus": params_dict.get("youtube_privacy", "public"),
+                        "webhookSecret": "s-vshorts-sec-9a8b7c6d5e4f3a2b1c0"
+                    }
+                    yt_res = requests.post(yt_webhook, json=yt_payload, timeout=30)
+                    logger.info(f"Modal Worker: YouTube auto-upload status for {task_id}: {yt_res.status_code}")
+                except Exception as ye:
+                    logger.warning(f"Modal Worker: YouTube auto-upload warning for {task_id}: {ye}")
         else:
             with open(state_file, "w", encoding="utf-8") as f:
                 json.dump({"state": "failed", "progress": 0, "task_id": task_id, "error": "Render completed but final video file not found"}, f)
@@ -266,6 +299,138 @@ def serve():
                 "task_id": task_id
             }
         }
+
+    @bangai_router.get("/tasks")
+    async def bangai_get_all_tasks(request: Request, limit: int = 60):
+        import glob
+        import time
+        volume.reload()
+        base_url = str(request.base_url).rstrip('/')
+        
+        user_task_dirs = glob.glob("/root/storage/users/*/tasks/*")
+        global_task_dirs = glob.glob("/root/storage/tasks/*")
+        all_dirs = list(set(user_task_dirs + global_task_dirs))
+        
+        tasks_list = []
+        for t_dir in all_dirs:
+            if not os.path.isdir(t_dir):
+                continue
+            task_id = os.path.basename(t_dir)
+            if task_id.startswith(".") or task_id.startswith("_"):
+                continue
+
+            # Load params.json
+            params_file = os.path.join(t_dir, "params.json")
+            params = {}
+            if os.path.exists(params_file):
+                try:
+                    with open(params_file, "r", encoding="utf-8") as pf:
+                        params = json.load(pf)
+                except Exception:
+                    pass
+
+            # Load script.json fallback
+            script_file = os.path.join(t_dir, "script.json")
+            script_data = {}
+            if os.path.exists(script_file):
+                try:
+                    with open(script_file, "r", encoding="utf-8") as scf:
+                        script_data = json.load(scf)
+                except Exception:
+                    pass
+            if not params and isinstance(script_data, dict) and "params" in script_data:
+                params = script_data.get("params", {})
+
+            # Load state.json
+            state_file = os.path.join(t_dir, "state.json")
+            state_data = {}
+            if os.path.exists(state_file):
+                try:
+                    with open(state_file, "r", encoding="utf-8") as sf:
+                        state_data = json.load(sf)
+                except Exception:
+                    pass
+
+            # Check for final video
+            final_mp4 = os.path.join(t_dir, "final-1.mp4")
+            has_video = os.path.exists(final_mp4) and os.path.getsize(final_mp4) > 1024
+            video_url = f"{base_url}/api/bangai/download/{task_id}/final-1.mp4" if has_video else None
+
+            # Resolve user_id
+            user_id = params.get("user_id") or state_data.get("user_id") or ""
+            if not user_id:
+                path_parts = t_dir.replace("\\", "/").split("/")
+                if "users" in path_parts:
+                    u_idx = path_parts.index("users")
+                    if u_idx + 1 < len(path_parts):
+                        user_id = path_parts[u_idx + 1]
+            if not user_id:
+                user_id = "default_user"
+
+            # Determine state
+            raw_state = state_data.get("state")
+            if has_video:
+                status_str = "completed"
+                progress = 100
+            elif raw_state in (-1, "failed"):
+                status_str = "failed"
+                progress = int(state_data.get("progress", 0) or 0)
+            elif raw_state in (1, "complete"):
+                status_str = "completed"
+                progress = 100
+            else:
+                status_str = "rendering"
+                progress = int(state_data.get("progress", 10) or 10)
+
+            # Credit Mode detection:
+            # If user has toggled Bang API Credits or no BYOK custom keys are present
+            has_custom_keys = bool(params.get("gemini_api_key") or params.get("openai_api_key") or params.get("pexels_api_keys") or params.get("elevenlabs_api_key"))
+            is_bang_credits = bool(params.get("use_bangai_credits") or params.get("bang_api_credits") or params.get("use_bang_material_credits") or not has_custom_keys)
+
+            mtime = os.path.getmtime(t_dir) if os.path.exists(t_dir) else time.time()
+            created_ts = state_data.get("updated_at") or mtime
+            if isinstance(created_ts, (int, float)) and created_ts < 2000000000:
+                created_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(created_ts))
+            else:
+                created_iso = str(created_ts)
+
+            subject = params.get("video_subject") or script_data.get("script", "")[:45] or state_data.get("video_subject") or f"Stock Studio Video #{task_id[:8]}"
+
+            tasks_list.append({
+                "id": task_id,
+                "task_id": task_id,
+                "title": subject,
+                "userId": user_id,
+                "status": status_str,
+                "progress": progress,
+                "currentStep": state_data.get("step") or state_data.get("failed_stage") or ("Render Complete" if has_video else "Processing Pipeline..."),
+                "error": state_data.get("error", ""),
+                "failedStage": state_data.get("failed_stage", ""),
+                "videoUrl": video_url,
+                "createdAt": created_iso,
+                "mtime": mtime,
+                "creditMode": "bang_credits" if is_bang_credits else "byok",
+                "settings": {
+                    "video_subject": subject,
+                    "video_aspect": params.get("video_aspect", "9:16"),
+                    "video_source": params.get("video_source", "pexels"),
+                    "voice_provider": params.get("voice_provider", "ElevenLabs / json2video"),
+                    "voice_name": params.get("voice_name", "Adam"),
+                    "voice_speed": params.get("voice_speed", 1.1),
+                    "script_engine": params.get("llm_provider", "gemini"),
+                    "script_model": params.get("llm_model", "gemini-2.5-flash"),
+                    "match_materials_to_script": bool(params.get("match_materials_to_script", True)),
+                    "auto_timeline_sync": bool(params.get("auto_timeline_sync", True)),
+                    "paragraph_number": params.get("paragraph_number", 2),
+                    "subtitle_preset": params.get("subtitle_preset", "mrbeast-viral"),
+                    "font_size": params.get("font_size", 60),
+                    "bgm_volume": params.get("bgm_volume", 0.08),
+                    "duration": state_data.get("duration") or 60
+                }
+            })
+
+        tasks_list.sort(key=lambda x: x.get("mtime", 0), reverse=True)
+        return {"status": 200, "data": {"tasks": tasks_list[:limit], "total": len(tasks_list)}}
         
     @bangai_router.get("/task/{task_id}")
     async def bangai_task_status(task_id: str, request: Request):

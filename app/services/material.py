@@ -1808,13 +1808,33 @@ def download_videos(
         minimum_duration: int,
         video_aspect: VideoAspect,
     ) -> List[MaterialInfo]:
-        return _search_videos_with_cache(
+        results = _search_videos_with_cache(
             provider=provider,
             search_videos=remote_search_videos,
             search_term=search_term,
             minimum_duration=minimum_duration,
             video_aspect=video_aspect,
         )
+        if not results:
+            if provider == "pexels":
+                logger.info(f"[Material] Pexels returned 0 candidates for {search_term!r}, executing automatic Pixabay failover...")
+                results = _search_videos_with_cache(
+                    provider="pixabay",
+                    search_videos=search_videos_pixabay,
+                    search_term=search_term,
+                    minimum_duration=minimum_duration,
+                    video_aspect=video_aspect,
+                )
+            elif provider == "pixabay":
+                logger.info(f"[Material] Pixabay returned 0 candidates for {search_term!r}, executing automatic Pexels failover...")
+                results = _search_videos_with_cache(
+                    provider="pexels",
+                    search_videos=search_videos_pexels,
+                    search_term=search_term,
+                    minimum_duration=minimum_duration,
+                    video_aspect=video_aspect,
+                )
+        return results
 
     material_directory = config.app.get("material_directory", "").strip()
     if material_directory == "task":
