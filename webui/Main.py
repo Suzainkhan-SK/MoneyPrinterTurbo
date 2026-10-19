@@ -4030,6 +4030,44 @@ def _open_voice_settings_dialog():
     _open_settings_dialog("voice")
 
 
+def _dismiss_automation_dialog():
+    """Dismiss 24-Hour Autonomous Autopilot dialog."""
+    st.session_state["automation_dialog_open"] = False
+
+
+def _open_automation_dialog():
+    """Open 24-Hour Autonomous Autopilot dialog."""
+    st.session_state["automation_dialog_open"] = True
+
+
+def _fetch_stock_studio_automation(user_email, user_id="", token=""):
+    """Fetch automation config from Netlify backend or fall back to local config."""
+    try:
+        url = f"https://bangai.netlify.app/.netlify/functions/stock-studio-automation?email={requests.utils.quote(user_email)}&userId={requests.utils.quote(user_id)}"
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        resp = requests.get(url, headers=headers, timeout=8)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.warning(f"[_fetch_stock_studio_automation] Error: {e}")
+    return {"success": False, "automation": None, "channels": []}
+
+
+def _save_stock_studio_automation(payload, token=""):
+    """Save automation config to Netlify backend."""
+    try:
+        url = "https://bangai.netlify.app/.netlify/functions/stock-studio-automation"
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        resp = requests.post(url, json=payload, headers=headers, timeout=12)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.warning(f"[_save_stock_studio_automation] Error: {e}")
+    return {"success": False, "error": str(e)}
+
+
 def _render_brand(available_update: str | None = None):
     """渲染项目名称、当前版本和可选的更新入口。"""
     update_link = ""
@@ -4096,6 +4134,16 @@ def _render_top_bar():
             width="stretch",
         ):
             _render_task_manager_entry()
+
+            st.button(
+                "⚡ Automate",
+                key="open_automation_dialog_button",
+                type="primary",
+                icon=":material/bolt:",
+                width="content",
+                on_click=_open_automation_dialog,
+                help="24-Hour Autonomous Video Autopilot & Topic Queue"
+            )
 
             st.button(
                 tr("Settings"),
@@ -5855,6 +5903,216 @@ def _render_voice_api_settings(panel):
                 )
                 if az_speech_region.strip() != saved_az_region:
                     _set_runtime_config("azure", "speech_region", az_speech_region.strip())
+
+
+# ── 24-HOUR AUTONOMOUS VIDEO ENGINE DIALOG ──
+@st.dialog(
+    "⚡ 24-Hour Autonomous Video Engine",
+    width="large",
+    on_dismiss=_dismiss_automation_dialog,
+)
+def _render_automation_dialog():
+    user_email = st.session_state.get("bangai_email") or ""
+    current_uid = utils.get_current_user_id() or ""
+    token = st.session_state.get("bangai_token") or ""
+
+    if "automation_data" not in st.session_state or st.session_state.get("automation_data_stale", True):
+        with st.spinner("Loading autonomous configuration..."):
+            res = _fetch_stock_studio_automation(user_email, current_uid, token)
+            if res.get("success"):
+                st.session_state["automation_data"] = res.get("automation") or {}
+                st.session_state["automation_channels"] = res.get("channels") or []
+                st.session_state["automation_data_stale"] = False
+            else:
+                st.session_state["automation_data"] = {
+                    "status": "PAUSED",
+                    "creditMode": "bang_credits",
+                    "upcomingTopics": [],
+                    "autoUploadToYouTube": True,
+                    "youtubePrivacy": "public"
+                }
+                st.session_state["automation_channels"] = []
+
+    auto = st.session_state.get("automation_data", {})
+    channels = st.session_state.get("automation_channels", [])
+    current_status = auto.get("status", "PAUSED")
+    is_active = (current_status == "ACTIVE")
+
+    if is_active:
+        st.markdown(
+            """
+            <div style="background: rgba(16, 185, 129, 0.12); border: 1.5px solid rgba(16, 185, 129, 0.4); border-radius: 12px; padding: 14px 18px; margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981;"></span>
+                        <span style="font-weight: 800; color: #10b981; font-size: 15px;">24h Autopilot is ACTIVE</span>
+                    </div>
+                    <span style="font-size: 12px; color: #10b981; font-weight: 600;">Runs every 24 hours</span>
+                </div>
+                <div style="font-size: 12.5px; color: #a1a1aa; margin-top: 6px;">
+                    Every 24 hours, the autonomous engine picks the top topic from your queue, generates high-definition stock video with your applied settings, and uploads it directly to your YouTube channel.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            """
+            <div style="background: rgba(245, 158, 11, 0.1); border: 1.5px solid rgba(245, 158, 11, 0.35); border-radius: 12px; padding: 14px 18px; margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #f59e0b;"></span>
+                        <span style="font-weight: 800; color: #f59e0b; font-size: 15px;">24h Autopilot is PAUSED</span>
+                    </div>
+                    <span style="font-size: 12px; color: #f59e0b; font-weight: 600;">Currently Inactive</span>
+                </div>
+                <div style="font-size: 12.5px; color: #a1a1aa; margin-top: 6px;">
+                    Enable 24h Autopilot to generate and publish videos automatically every 24 hours without manual review.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    btn_col1, btn_col2 = st.columns([1, 1], gap="medium")
+    with btn_col1:
+        if is_active:
+            if st.button("⏸️ Pause 24h Autopilot", type="secondary", use_container_width=True, key="toggle_auto_btn"):
+                toggle_res = _save_stock_studio_automation({"action": "toggle", "email": user_email, "userId": current_uid}, token)
+                if toggle_res.get("success"):
+                    st.session_state["automation_data"]["status"] = toggle_res.get("status")
+                    st.toast("Autopilot paused.")
+                    st.rerun(scope="fragment")
+        else:
+            if st.button("▶️ Activate 24h Autopilot", type="primary", use_container_width=True, key="toggle_auto_btn"):
+                toggle_res = _save_stock_studio_automation({"action": "toggle", "email": user_email, "userId": current_uid}, token)
+                if toggle_res.get("success"):
+                    st.session_state["automation_data"]["status"] = toggle_res.get("status")
+                    st.toast("⚡ Autopilot activated!")
+                    st.rerun(scope="fragment")
+
+    with btn_col2:
+        if st.button("⚡ Run Today's Topic Now", type="secondary", use_container_width=True, key="run_now_auto_btn"):
+            with st.spinner("⏳ Dispatching today's autonomous video task to Modal GPU..."):
+                run_res = _save_stock_studio_automation({"action": "run-now", "email": user_email, "userId": current_uid}, token)
+                if run_res.get("success"):
+                    st.success(f"🚀 Started! Task ID: {run_res.get('taskId')}. Topic: '{run_res.get('topic')}'")
+                    st.session_state["automation_data_stale"] = True
+                else:
+                    st.error(f"Failed: {run_res.get('error')}")
+
+    st.divider()
+
+    st.markdown("#### ⚡ Video Rendering Credit Mode")
+    credit_mode_options = [
+        "⚡ Bang API Credits (System Rotated Keys)",
+        "🔑 BYOK Keys (Your Personal Keys)"
+    ]
+    cur_mode_idx = 0 if auto.get("creditMode") == "bang_credits" else 1
+    selected_mode = st.radio(
+        "Credit Provider",
+        options=credit_mode_options,
+        index=cur_mode_idx,
+        key="auto_credit_mode_radio",
+        label_visibility="collapsed"
+    )
+    chosen_credit_mode = "bang_credits" if selected_mode.startswith("⚡") else "byok"
+    if chosen_credit_mode == "bang_credits":
+        st.caption("ℹ️ Uses platform managed rotated keys for Gemini 2.5 Flash, ElevenLabs Hindi/English voices, and Pexels stock footage.")
+    else:
+        st.caption("ℹ️ Uses your personal API keys configured in Stock Studio Settings.")
+
+    st.divider()
+
+    st.markdown("#### 📋 Upcoming Topics Queue")
+    st.caption("Enter the video topics for the upcoming days (one topic per line). Every 24 hours, the top topic is processed and rendered.")
+
+    q_col1, q_col2, q_col3 = st.columns(3)
+    sample_text = None
+    with q_col1:
+        if st.button("+ Add Mysteries", use_container_width=True, key="add_mysteries_btn"):
+            sample_text = ["Top 5 Unexplained Mysteries of Area 51", "Secrets of Bermuda Triangle Flight 19", "Deep Ocean Ancient Leviathan Legends"]
+    with q_col2:
+        if st.button("+ Add Tech", use_container_width=True, key="add_tech_btn"):
+            sample_text = ["Quantum Computing Breakthroughs of 2026", "How Neuralink Brain Interfaces Work", "Deep Space Telescopes Revealing New Planets"]
+    with q_col3:
+        if st.button("+ Add Facts", use_container_width=True, key="add_facts_btn"):
+            sample_text = ["3 Dark Psychological Facts About Human Behavior", "Mind-Blowing Space Scale Facts", "Ancient Inventions Way Ahead of Their Time"]
+
+    existing_topics = auto.get("upcomingTopics") or []
+    if "auto_topics_input" not in st.session_state:
+        st.session_state["auto_topics_input"] = "\n".join(existing_topics)
+
+    if sample_text:
+        cur_t = [t.strip() for t in st.session_state["auto_topics_input"].split("\n") if t.strip()]
+        for s in sample_text:
+            if s not in cur_t:
+                cur_t.append(s)
+        st.session_state["auto_topics_input"] = "\n".join(cur_t)
+        st.rerun(scope="fragment")
+
+    topics_val = st.text_area(
+        "Upcoming Topics",
+        value=st.session_state.get("auto_topics_input", ""),
+        height=140,
+        placeholder="Enter topics (one per line)...\nExample:\nTop 5 Unexplained Mysteries of Area 51\nSecrets of Bermuda Triangle Flight 19\nDeep Ocean Ancient Leviathan Legends",
+        key="auto_topics_textarea",
+        label_visibility="collapsed"
+    )
+    topics_list = [t.strip() for t in topics_val.split("\n") if t.strip()]
+    st.caption(f"📊 Total queued topics: **{len(topics_list)} topics**")
+
+    st.divider()
+
+    st.markdown("#### 📺 YouTube Auto-Upload Integration")
+    auto_upload_enabled = st.checkbox(
+        "Automatically upload rendered video to YouTube channel upon completion",
+        value=auto.get("autoUploadToYouTube", True),
+        key="auto_upload_yt_check"
+    )
+
+    selected_channel_id = auto.get("selectedChannelId", "")
+    if auto_upload_enabled:
+        if channels and len(channels) > 0:
+            channel_labels = [f"{c.get('channelTitle', 'Channel')} ({c.get('channelId', '')})" for c in channels]
+            ch_idx = 0
+            for idx, c in enumerate(channels):
+                if c.get("channelId") == selected_channel_id:
+                    ch_idx = idx
+            chosen_ch_str = st.selectbox(
+                "Upload Channel",
+                options=channel_labels,
+                index=ch_idx,
+                key="auto_yt_channel_select"
+            )
+            selected_channel_id = channels[channel_labels.index(chosen_ch_str)].get("channelId", "")
+        else:
+            st.info("ℹ️ Connect your YouTube channel in your [BangAI Profile](https://bangai.netlify.app/#/profile) to enable direct cloud uploads.")
+
+    st.divider()
+
+    if st.button("💾 Save Autopilot Configuration", type="primary", use_container_width=True, key="save_auto_settings_btn"):
+        with st.spinner("Saving..."):
+            save_payload = {
+                "action": "save",
+                "email": user_email,
+                "userId": current_uid,
+                "upcomingTopics": topics_list,
+                "creditMode": chosen_credit_mode,
+                "autoUploadToYouTube": auto_upload_enabled,
+                "selectedChannelId": selected_channel_id
+            }
+            res = _save_stock_studio_automation(save_payload, token)
+            if res.get("success"):
+                st.session_state["automation_data"] = res.get("automation") or save_payload
+                st.session_state["automation_data_stale"] = False
+                st.success("✅ Autopilot configuration saved successfully!")
+                time.sleep(1)
+                st.session_state["automation_dialog_open"] = False
+                st.rerun()
+            else:
+                st.error(f"Failed to save: {res.get('error')}")
 
 
 # 设置属于低频操作，使用中等尺寸 Dialog 避免长期占用主页面纵向空间，
@@ -11021,13 +11279,25 @@ def _render_generation_controls(
 
     _render_settings_transfer(params)
 
-    start_button = st.button(
-        tr("Generate Video"),
-        use_container_width=True,
-        type="primary",
-        key="generate_video_button",
-        on_click=_prepare_generation_task,
-    )
+    btn_col1, btn_col2 = st.columns([1.6, 1.0], gap="medium")
+    with btn_col1:
+        start_button = st.button(
+            tr("Generate Video"),
+            use_container_width=True,
+            type="primary",
+            key="generate_video_button",
+            on_click=_prepare_generation_task,
+        )
+    with btn_col2:
+        automate_button = st.button(
+            "⚡ Automate (24h Autopilot)",
+            use_container_width=True,
+            type="secondary",
+            key="open_automation_footer_button",
+            icon=":material/schedule:",
+            on_click=_open_automation_dialog,
+            help="Autonomous 24-hour video generation on queued topics with YouTube auto-upload"
+        )
     render_onboarding_tour()
     if start_button:
         _save_runtime_config()
@@ -11439,6 +11709,9 @@ def _render_application():
 
     if st.session_state.get("settings_dialog_open", False):
         _render_settings_dialog()
+
+    if st.session_state.get("automation_dialog_open", False):
+        _render_automation_dialog()
 
     if _apply_pending_settings_preset():
         st.success(tr("Settings Preset Imported"))
