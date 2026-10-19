@@ -464,6 +464,44 @@ button[data-testid="baseButton-secondary"] * {
     color: #201515 !important;
 }
 
+/* Zapier ⚡ Automate Button in Top Toolbar (Light Mode) */
+.st-key-open_automation_dialog_button button,
+div[class*="st-key-open_automation_dialog_button"] button {
+    background-color: #fffefb !important;
+    color: #ff4f00 !important;
+    border: 1.5px solid #ff4f00 !important;
+    border-radius: 8px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
+    padding: 0 10px !important;
+    font-size: 12.5px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 1px 3px rgba(255, 79, 0, 0.12) !important;
+    white-space: nowrap !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 5px !important;
+}
+.st-key-open_automation_dialog_button button p,
+.st-key-open_automation_dialog_button button span,
+.st-key-open_automation_dialog_button button * {
+    color: #ff4f00 !important;
+    font-weight: 700 !important;
+    white-space: nowrap !important;
+}
+.st-key-open_automation_dialog_button button:hover,
+div[class*="st-key-open_automation_dialog_button"] button:hover {
+    background-color: #fff5ee !important;
+    border-color: #e04500 !important;
+    color: #e04500 !important;
+    transform: translateY(-1px) !important;
+}
+.st-key-open_automation_dialog_button button:hover * {
+    color: #e04500 !important;
+}
+
 /* Zapier Segmented Controls */
 [role="radiogroup"],
 div[class*="st-key-voice_mode_control"] [role="radiogroup"] {
@@ -990,6 +1028,44 @@ button[kind="secondary"] *,
 div[data-testid="stPopover"] > div > button *,
 button[data-testid="baseButton-secondary"] * {
     color: #fffefb !important;
+}
+
+/* Zapier ⚡ Automate Button in Top Toolbar (Dark Mode) */
+.st-key-open_automation_dialog_button button,
+div[class*="st-key-open_automation_dialog_button"] button {
+    background-color: #251c1c !important;
+    color: #ff7733 !important;
+    border: 1.5px solid #ff5500 !important;
+    border-radius: 8px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
+    padding: 0 10px !important;
+    font-size: 12.5px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 1px 4px rgba(255, 79, 0, 0.25) !important;
+    white-space: nowrap !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 5px !important;
+}
+.st-key-open_automation_dialog_button button p,
+.st-key-open_automation_dialog_button button span,
+.st-key-open_automation_dialog_button button * {
+    color: #ff7733 !important;
+    font-weight: 700 !important;
+    white-space: nowrap !important;
+}
+.st-key-open_automation_dialog_button button:hover,
+div[class*="st-key-open_automation_dialog_button"] button:hover {
+    background-color: #332727 !important;
+    border-color: #ff7733 !important;
+    color: #ff9955 !important;
+    transform: translateY(-1px) !important;
+}
+.st-key-open_automation_dialog_button button:hover * {
+    color: #ff9955 !important;
 }
 
 /* Zapier Segmented Controls Dark */
@@ -4141,8 +4217,7 @@ def _render_top_bar():
             st.button(
                 "⚡ Automate",
                 key="open_automation_dialog_button",
-                type="primary",
-                icon=":material/bolt:",
+                type="secondary",
                 width="content",
                 on_click=_open_automation_dialog,
                 help="24-Hour Autonomous Video Autopilot & Topic Queue"
@@ -11282,25 +11357,13 @@ def _render_generation_controls(
 
     _render_settings_transfer(params)
 
-    btn_col1, btn_col2 = st.columns([1.6, 1.0], gap="medium")
-    with btn_col1:
-        start_button = st.button(
-            tr("Generate Video"),
-            use_container_width=True,
-            type="primary",
-            key="generate_video_button",
-            on_click=_prepare_generation_task,
-        )
-    with btn_col2:
-        automate_button = st.button(
-            "⚡ Automate (24h Autopilot)",
-            use_container_width=True,
-            type="secondary",
-            key="open_automation_footer_button",
-            icon=":material/schedule:",
-            on_click=_open_automation_dialog,
-            help="Autonomous 24-hour video generation on queued topics with YouTube auto-upload"
-        )
+    start_button = st.button(
+        tr("Generate Video"),
+        use_container_width=True,
+        type="primary",
+        key="generate_video_button",
+        on_click=_prepare_generation_task,
+    )
     render_onboarding_tour()
     if start_button:
         _save_runtime_config()

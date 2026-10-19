@@ -346,15 +346,18 @@ div[class*="st-key-voice_mode_control"] [role="radiogroup"] > button p {
     }
     .st-key-top_bar_actions {
         display: grid !important;
-        grid-template-columns: 1.15fr 1fr 1fr !important;
+        grid-template-columns: 1fr 1fr !important;
         align-items: center !important;
-        gap: 6px !important;
+        gap: 8px !important;
         width: 100% !important;
         box-sizing: border-box !important;
     }
     .st-key-top_bar_actions > div[data-testid="stLayoutWrapper"],
     .st-key-top_bar_actions div[class*="st-key-task_manager_entry"],
     .st-key-top_bar_actions div[data-testid="stPopover"],
+    .st-key-top_bar_actions div[class*="st-key-open_automation_dialog_button"],
+    .st-key-top_bar_actions div[class*="st-key-open_settings_dialog_button"],
+    .st-key-top_bar_actions div[class*="st-key-top_language_code_selector"],
     .st-key-top_bar_actions div[data-testid="stElementContainer"] {
         width: 100% !important;
         max-width: 100% !important;
@@ -363,6 +366,8 @@ div[class*="st-key-voice_mode_control"] [role="radiogroup"] > button p {
     }
     .st-key-top_bar_actions div[data-testid="stPopover"] > button,
     .st-key-top_bar_actions button[data-testid="stBaseButton-secondary"],
+    .st-key-top_bar_actions button[data-testid="stBaseButton-primary"],
+    .st-key-top_bar_actions div[class*="st-key-open_automation_dialog_button"] button,
     .st-key-top_bar_actions div[data-testid="stSelectbox"] {
         width: 100% !important;
         min-width: 0 !important;
@@ -370,14 +375,15 @@ div[class*="st-key-voice_mode_control"] [role="radiogroup"] > button p {
         box-sizing: border-box !important;
         height: 38px !important;
         min-height: 38px !important;
-        padding: 4px 6px !important;
+        max-height: 38px !important;
+        padding: 4px 8px !important;
         font-size: 12px !important;
         font-weight: 600 !important;
         white-space: nowrap !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        gap: 4px !important;
+        gap: 5px !important;
         border-radius: 8px !important;
     }
     .st-key-top_bar_actions div[data-testid="stSelectbox"] > div {
@@ -395,6 +401,42 @@ div[class*="st-key-voice_mode_control"] [role="radiogroup"] > button p {
         padding: 0 4px !important;
         font-size: 12px !important;
     }
+    .st-key-top_bar_actions button p,
+    .st-key-top_bar_actions button span {
+        white-space: nowrap !important;
+        line-height: 1 !important;
+    }
+}
+
+/* ⚡ Automate Button in Top Toolbar (Light & Dark theme styling) */
+.st-key-open_automation_dialog_button button,
+div[class*="st-key-open_automation_dialog_button"] button {
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
+    padding: 0 12px !important;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    white-space: nowrap !important;
+    border-radius: 8px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 5px !important;
+    cursor: pointer !important;
+    box-sizing: border-box !important;
+    transition: all 0.18s ease !important;
+}
+
+.st-key-open_automation_dialog_button button p,
+.st-key-open_automation_dialog_button button span,
+.st-key-open_automation_dialog_button button [data-testid="stIconMaterial"] {
+    white-space: nowrap !important;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    line-height: 1 !important;
+    display: inline-flex !important;
+    align-items: center !important;
 }
 
 @media (max-width: 700px) {
