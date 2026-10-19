@@ -924,6 +924,7 @@ div[class*="st-key-open_voice_settings_btn"] button:active {
     margin: 0 0 6px 0 !important;
     background: linear-gradient(90deg, #1e3a8a, #7c3aed, #db2777);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
@@ -956,6 +957,7 @@ div[class*="st-key-open_voice_settings_btn"] button:active {
     .ts-header-title {
         background: linear-gradient(90deg, #60a5fa, #c084fc, #f472b6);
         -webkit-background-clip: text;
+        background-clip: text;
         -webkit-text-fill-color: transparent;
     }
     .ts-header-subtitle {
