@@ -65,6 +65,12 @@ class MemoryState(BaseState):
                 sfile = os.path.join(tdir, "state.json")
                 with open(sfile, "w", encoding="utf-8") as f:
                     json.dump(task_dict, f, default=str)
+                # Commit to modal volume if running inside Modal GPU cluster
+                try:
+                    import modal
+                    modal.Volume.from_name("bangai-storage").commit()
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -100,9 +106,18 @@ class MemoryState(BaseState):
 
             # Fallback to state.json on disk if task not in memory (e.g. new session or thread)
             try:
+                import glob
                 from app.utils import utils
                 tdir = utils.task_dir(task_id, create=False)
                 sfile = os.path.join(tdir, "state.json")
+                if not os.path.isfile(sfile):
+                    # Multi-tenant and worker search across storage paths
+                    base_storage = os.path.abspath(os.path.join(utils.root_dir(), "storage"))
+                    candidates = glob.glob(os.path.join(base_storage, "users", "*", "tasks", str(task_id), "state.json"))
+                    candidates += glob.glob(os.path.join(base_storage, "tasks", str(task_id), "state.json"))
+                    if candidates:
+                        sfile = candidates[0]
+
                 if os.path.isfile(sfile):
                     with open(sfile, "r", encoding="utf-8") as f:
                         disk_data = json.load(f)

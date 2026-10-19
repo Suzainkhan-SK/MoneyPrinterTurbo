@@ -46,7 +46,7 @@ Generate a script for a video, depending on the subject of the video.
 5. only return the raw content of the script.
 6. do not include "voiceover", "narrator" or similar indicators of what should be spoken at the beginning of each paragraph or line.
 7. you must not mention the prompt, or anything about the script itself. also, never talk about the amount of paragraphs or lines. just write the script.
-8. respond in the same language as the video subject.
+8. if a language is specified in the prompt, write the entire script strictly in that requested language. Otherwise, respond in the same language as the video subject.
 """.strip()
 
 # Claude Code CLI 默认使用编码 agent 的系统提示词，其中大量约束与文案写作
@@ -776,7 +776,16 @@ def build_script_prompt(
 - number of paragraphs: {paragraph_number}
 """.rstrip()
     if language:
-        prompt += f"\n- language: {language}"
+        lang_str = str(language).strip()
+        if lang_str in ("hi-IN", "hi", "Hindi", "hindi"):
+            clean_lang = "Hindi (हिन्दी) in Devanagari script"
+        elif lang_str in ("zh-CN", "zh", "Chinese"):
+            clean_lang = "Simplified Chinese (简体中文)"
+        elif lang_str in ("en-US", "en-IN", "en", "English"):
+            clean_lang = "English"
+        else:
+            clean_lang = lang_str
+        prompt += f"\n- language: {clean_lang}\n- CRITICAL LANGUAGE RULE: The entire spoken script narration MUST be written strictly in {clean_lang}. Even if the video subject is written in English, translate the concept and write all narration sentences in {clean_lang}."
     if video_script_prompt:
         prompt += f"""
 

@@ -178,18 +178,24 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
         if os.path.exists(final_video):
             logger.success(f"Modal Worker: Task {task_id} completed successfully")
             final_dl_url = f"https://cmpunktg--bangai-stock-studio-serve.modal.run/api/bangai/download/{task_id}/final-1.mp4"
+            task_state_payload = {
+                "state": 1,
+                "status": "complete",
+                "progress": 100,
+                "task_id": task_id,
+                "videos": [final_video],
+                "video_url": f"/api/bangai/download/{task_id}/final-1.mp4",
+                "video_subject": params_dict.get("video_subject", "")
+            }
             with open(state_file, "w", encoding="utf-8") as f:
-                json.dump({
-                    "state": "complete",
-                    "progress": 100,
-                    "task_id": task_id,
-                    "video_url": f"/api/bangai/download/{task_id}/final-1.mp4"
-                }, f)
+                json.dump(task_state_payload, f, default=str)
+            volume.commit()
             
             # Autopilot: Automatic YouTube Upload if enabled
             if params_dict.get("auto_upload_youtube") and params_dict.get("user_youtube_access_token"):
                 try:
                     import requests
+                    import re
                     yt_webhook = params_dict.get("youtube_webhook_url") or "https://cmpunktg29.app.n8n.cloud/webhook/viral-shorts-ai-youtube-upload"
                     subj = params_dict.get("video_subject") or "Viral Stock Studio Short"
                     logger.info(f"Modal Worker: Auto-uploading video {task_id} ('{subj}') to YouTube...")
@@ -209,11 +215,31 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
                     }
                     yt_res = requests.post(yt_webhook, json=yt_payload, timeout=30)
                     logger.info(f"Modal Worker: YouTube auto-upload status for {task_id}: {yt_res.status_code}")
+                    
+                    yt_video_url = ""
+                    try:
+                        if yt_res.status_code == 200:
+                            y_data = yt_res.json()
+                            yt_video_url = y_data.get("videoUrl") or y_data.get("url") or (f"https://youtube.com/shorts/{y_data.get('videoId')}" if y_data.get("videoId") else "")
+                    except Exception:
+                        pass
+                    if not yt_video_url and yt_res.text:
+                        yt_match = re.search(r'https?://[^\s"\'<>]+(?:youtu\.be|youtube\.com)[^\s"\'<>]*', yt_res.text)
+                        if yt_match:
+                            yt_video_url = yt_match.group(0)
+
+                    task_state_payload["youtube_url"] = yt_video_url
+                    task_state_payload["youtube_channel_title"] = params_dict.get("user_youtube_channel_title", "")
+                    task_state_payload["youtube_channel_id"] = params_dict.get("user_youtube_channel_id", "")
+                    with open(state_file, "w", encoding="utf-8") as f:
+                        json.dump(task_state_payload, f, default=str)
+                    volume.commit()
                 except Exception as ye:
                     logger.warning(f"Modal Worker: YouTube auto-upload warning for {task_id}: {ye}")
         else:
             with open(state_file, "w", encoding="utf-8") as f:
-                json.dump({"state": "failed", "progress": 0, "task_id": task_id, "error": "Render completed but final video file not found"}, f)
+                json.dump({"state": -1, "status": "failed", "progress": 0, "task_id": task_id, "error": "Render completed but final video file not found"}, f)
+            volume.commit()
     except Exception as e:
         import traceback
         err_str = str(e)
@@ -407,11 +433,17 @@ def serve():
                 "error": state_data.get("error", ""),
                 "failedStage": state_data.get("failed_stage", ""),
                 "videoUrl": video_url,
+                "videos": [video_url] if video_url else [],
+                "youtube_url": state_data.get("youtube_url") or params.get("youtube_url") or "",
+                "youtubeUrl": state_data.get("youtube_url") or params.get("youtube_url") or "",
+                "youtube_channel_title": state_data.get("youtube_channel_title") or params.get("user_youtube_channel_title") or "",
+                "youtube_channel_id": state_data.get("youtube_channel_id") or params.get("user_youtube_channel_id") or "",
                 "createdAt": created_iso,
                 "mtime": mtime,
                 "creditMode": "bang_credits" if is_bang_credits else "byok",
                 "settings": {
                     "video_subject": subject,
+                    "video_language": params.get("video_language") or state_data.get("video_language") or "hi-IN",
                     "video_aspect": params.get("video_aspect", "9:16"),
                     "video_source": params.get("video_source", "pexels"),
                     "voice_provider": params.get("voice_provider", "ElevenLabs / json2video"),

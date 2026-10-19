@@ -2482,6 +2482,15 @@ def _normalize_task_state(state):
         const.TASK_STATE_PROCESSING,
     ):
         return state
+    str_s = str(state or "").strip().lower()
+    if str_s in ("complete", "success", "done", "finished", "1"):
+        return const.TASK_STATE_COMPLETE
+    if str_s in ("failed", "error", "-1"):
+        return const.TASK_STATE_FAILED
+    if str_s in ("processing", "running", "started", "2"):
+        return const.TASK_STATE_PROCESSING
+    if str_s in ("queued", "waiting", "pending"):
+        return "queued"
     try:
         return int(state)
     except (TypeError, ValueError):
@@ -4733,6 +4742,7 @@ def _render_generation_task_snapshot(task_id, task):
 @st.fragment(run_every=webui_task.TASK_LOG_REFRESH_INTERVAL_SECONDS)
 def _render_running_generation_task(task_id):
     """只在任务运行期间轮询；结束后切回静态结果，停止不必要的定时刷新。"""
+    _maybe_reload_cloud_volume(min_interval=2.0)
     task = None
     try:
         task = sm.state.get_task(task_id)
@@ -4744,9 +4754,18 @@ def _render_running_generation_task(task_id):
     # Fallback to state.json or disk inspection if sm.state is empty in this session
     if not task or not task.get("videos"):
         try:
+            import glob
             tasks_root = os.path.realpath(utils.task_dir())
             task_path = os.path.realpath(os.path.join(tasks_root, str(task_id)))
             state_file = os.path.join(task_path, "state.json")
+            if not os.path.isfile(state_file):
+                base_storage = os.path.abspath(os.path.join(utils.root_dir(), "storage"))
+                cand_states = glob.glob(os.path.join(base_storage, "users", "*", "tasks", str(task_id), "state.json"))
+                cand_states += glob.glob(os.path.join(base_storage, "tasks", str(task_id), "state.json"))
+                if cand_states:
+                    state_file = cand_states[0]
+                    task_path = os.path.dirname(state_file)
+
             if os.path.isfile(state_file):
                 with open(state_file, "r", encoding="utf-8") as f:
                     disk_task = json.load(f)
@@ -5983,6 +6002,45 @@ def _render_voice_api_settings(panel):
                     _set_runtime_config("azure", "speech_region", az_speech_region.strip())
 
 
+def _collect_current_ui_applied_settings():
+    saved_params = st.session_state.get("latest_ui_video_params") or {}
+    lang = (
+        st.session_state.get("script_language_select")
+        or saved_params.get("video_language")
+        or config.ui.get("video_language")
+        or "hi-IN"
+    )
+    voice_name = (
+        st.session_state.get("voice_name_select")
+        or saved_params.get("voice_name")
+        or config.app.get("voice_name", "json2video:jU6FDipvScsl0aEFyDoh:Aravinda - Mysteriou - 🇮🇳 Hindi (Male)")
+    )
+    voice_rate = float(
+        st.session_state.get("voice_rate_slider")
+        or saved_params.get("voice_rate")
+        or config.app.get("voice_rate", 1.1)
+    )
+    return {
+        "video_language": lang,
+        "video_aspect": st.session_state.get("video_aspect_radio") or saved_params.get("video_aspect") or config.app.get("video_aspect", "9:16"),
+        "video_source": st.session_state.get("video_source_select") or saved_params.get("video_source") or config.app.get("video_source", "pexels"),
+        "voice_name": voice_name,
+        "voice_speed": voice_rate,
+        "voice_rate": voice_rate,
+        "llm_provider": st.session_state.get("llm_provider_select") or saved_params.get("llm_provider") or config.app.get("llm_provider", "gemini"),
+        "llm_model": st.session_state.get("llm_model_select") or saved_params.get("llm_model") or config.app.get("gemini_model", "gemini-2.5-flash"),
+        "paragraph_number": int(st.session_state.get("paragraph_number_slider") or saved_params.get("paragraph_number") or config.app.get("paragraph_number", 2)),
+        "subtitle_preset": st.session_state.get("subtitle_preset_select") or saved_params.get("subtitle_preset") or "mrbeast-viral",
+        "font_name": st.session_state.get("font_name_select") or saved_params.get("font_name") or config.app.get("font_name", ""),
+        "font_size": int(st.session_state.get("font_size_slider") or saved_params.get("font_size") or config.app.get("font_size", 50)),
+        "text_fore_color": st.session_state.get("font_color_picker") or saved_params.get("text_fore_color") or config.app.get("text_fore_color", "#FFE600"),
+        "stroke_color": st.session_state.get("stroke_color_picker") or saved_params.get("stroke_color") or config.app.get("stroke_color", "#000000"),
+        "stroke_width": float(st.session_state.get("stroke_width_slider") or saved_params.get("stroke_width") or config.app.get("stroke_width", 2.0)),
+        "bgm_type": st.session_state.get("bgm_type_select") or saved_params.get("bgm_type") or config.app.get("bgm_type", "random"),
+        "bgm_volume": float(st.session_state.get("bgm_volume_slider") or saved_params.get("bgm_volume") or config.app.get("bgm_volume", 0.15)),
+    }
+
+
 # ── 24-HOUR AUTONOMOUS VIDEO ENGINE DIALOG ──
 @st.dialog(
     "⚡ 24-Hour Autonomous Video Engine",
@@ -6015,6 +6073,7 @@ def _render_automation_dialog():
     channels = st.session_state.get("automation_channels", [])
     current_status = auto.get("status", "PAUSED")
     is_active = (current_status == "ACTIVE")
+    applied_settings = _collect_current_ui_applied_settings()
 
     if is_active:
         st.markdown(
@@ -6028,7 +6087,7 @@ def _render_automation_dialog():
                     <span style="font-size: 12px; color: #10b981; font-weight: 600;">Runs every 24 hours</span>
                 </div>
                 <div style="font-size: 12.5px; color: #a1a1aa; margin-top: 6px;">
-                    Every 24 hours, the autonomous engine picks the top topic from your queue, generates high-definition stock video with your applied settings, and uploads it directly to your YouTube channel.
+                    Every 24 hours, the autonomous engine picks the top topic from your queue, generates high-definition stock video strictly with your applied studio settings, and uploads it directly to your YouTube channel.
                 </div>
             </div>
             """,
@@ -6053,6 +6112,30 @@ def _render_automation_dialog():
             unsafe_allow_html=True
         )
 
+    # ── Applied UI Settings Preview Box ──
+    applied_lang = applied_settings.get("video_language", "hi-IN")
+    lang_disp = "🇮🇳 Hindi (हिन्दी / hi-IN)" if "hi" in str(applied_lang).lower() else str(applied_lang)
+    v_name = applied_settings.get("voice_name", "")
+    voice_disp = v_name.split(":")[-1] if ":" in v_name else (v_name or "Default Voice")
+    st.markdown(
+        f"""
+        <div style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; font-size: 12px;">
+            <div style="font-weight: 800; color: #06b6d4; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                <span>⚙️ Active Studio Settings (Applied to all Automated Videos):</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; color: #e2e8f0;">
+                <div>🌐 <strong>Script Language:</strong> <span style="color: #38bdf8; font-weight: 700;">{lang_disp}</span></div>
+                <div>🎙️ <strong>Voice:</strong> <span style="color: #4ade80; font-weight: 700;">{voice_disp}</span></div>
+                <div>📐 <strong>Aspect Ratio:</strong> {applied_settings.get('video_aspect', '9:16')}</div>
+                <div>🎬 <strong>Video Source:</strong> {applied_settings.get('video_source', 'pexels').upper()}</div>
+                <div>🎨 <strong>Subtitles:</strong> {applied_settings.get('font_size', 50)}px • {applied_settings.get('text_fore_color', '#FFE600')}</div>
+                <div>🎵 <strong>BGM Volume:</strong> {applied_settings.get('bgm_volume', 0.15)}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
     btn_col1, btn_col2 = st.columns([1, 1], gap="medium")
     with btn_col1:
         if is_active:
@@ -6073,10 +6156,34 @@ def _render_automation_dialog():
     with btn_col2:
         if st.button("⚡ Run Today's Topic Now", type="secondary", use_container_width=True, key="run_now_auto_btn"):
             with st.spinner("⏳ Dispatching today's autonomous video task to Modal GPU..."):
-                run_res = _save_stock_studio_automation({"action": "run-now", "email": user_email, "userId": current_uid}, token)
+                current_topics_raw = str(st.session_state.get("auto_topics_textarea", "") or st.session_state.get("auto_topics_input", "") or "").strip()
+                current_topics = [t.strip() for t in current_topics_raw.split("\n") if t.strip()]
+                cur_settings = _collect_current_ui_applied_settings()
+                run_payload = {
+                    "action": "run-now",
+                    "email": user_email,
+                    "userId": current_uid,
+                    "upcomingTopics": current_topics if current_topics else None,
+                    "settings": cur_settings,
+                    "creditMode": auto.get("creditMode", "bang_credits"),
+                    "autoUploadToYouTube": auto.get("autoUploadToYouTube", True),
+                    "selectedChannelId": auto.get("selectedChannelId", "")
+                }
+                run_res = _save_stock_studio_automation(run_payload, token)
                 if run_res.get("success"):
-                    st.success(f"🚀 Started! Task ID: {run_res.get('taskId')}. Topic: '{run_res.get('topic')}'")
+                    task_id = run_res.get("taskId")
+                    topic = run_res.get("topic") or "Autonomous Video"
+                    st.session_state["current_generation_task_id"] = task_id
+                    _add_active_generation_task(task_id, subject=topic)
+                    st.session_state["automation_dialog_open"] = False
                     st.session_state["automation_data_stale"] = True
+                    try:
+                        import modal
+                        modal.Volume.from_name("bangai-storage").reload()
+                    except Exception:
+                        pass
+                    st.toast(f"🚀 Started! Task {task_id[:8]}", icon="⚡")
+                    st.rerun()
                 else:
                     st.error(f"Failed: {run_res.get('error')}")
 
@@ -6172,11 +6279,13 @@ def _render_automation_dialog():
 
     if st.button("💾 Save Autopilot Configuration", type="primary", use_container_width=True, key="save_auto_settings_btn"):
         with st.spinner("Saving..."):
+            cur_settings = _collect_current_ui_applied_settings()
             save_payload = {
                 "action": "save",
                 "email": user_email,
                 "userId": current_uid,
                 "upcomingTopics": topics_list,
+                "settings": cur_settings,
                 "creditMode": chosen_credit_mode,
                 "autoUploadToYouTube": auto_upload_enabled,
                 "selectedChannelId": selected_channel_id
@@ -11843,6 +11952,10 @@ def _render_application():
     )
 
     _render_subtitle_settings(right_panel, params)
+    try:
+        st.session_state["latest_ui_video_params"] = params.model_dump(mode="json")
+    except Exception:
+        pass
 
     generation_submitted = _render_generation_controls(
         params,
