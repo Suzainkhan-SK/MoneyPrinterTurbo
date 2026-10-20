@@ -9733,7 +9733,7 @@ def _synthesize_voice_preview(
         with config.try_runtime_config_lock() as lock_acquired:
             if not lock_acquired:
                 return {"busy": True}
-            tts_kwargs: dict[str, Any] = {
+            tts_kwargs = {
                 "text": content,
                 "voice_name": voice_name,
                 "voice_rate": voice_rate,

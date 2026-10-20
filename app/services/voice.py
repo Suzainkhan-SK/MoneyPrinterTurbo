@@ -2687,6 +2687,20 @@ def elevenlabs_tts(
 
     from app.services.key_rotator import key_rotator
     use_bang_voice = bool(config.bangai_credits.get("use_bang_voice_credits", False))
+    if not model_id:
+        model_id = config.elevenlabs.get("model_id", "eleven_multilingual_v2")
+
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    payload = {
+        "text": text,
+        "model_id": model_id,
+        "voice_settings": {
+            "stability": 0.5,
+            "similarity_boost": 0.75,
+            "style": 0.0,
+            "use_speaker_boost": True,
+        },
+    }
     pool_keys = key_rotator.get_all_keys("voice_tts", provider="elevenlabs") or key_rotator.get_keys("elevenlabs")
     max_attempts = max(len(pool_keys), 3) if (use_bang_voice or len(pool_keys) > 0) else 3
 
