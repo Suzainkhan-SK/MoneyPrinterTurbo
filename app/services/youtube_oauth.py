@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from loguru import logger
 from app.config import config
+from app.utils import utils
 
 BANGAI_API_BASE = os.getenv("BANGAI_API_BASE", "https://bangai.netlify.app/.netlify/functions")
 
