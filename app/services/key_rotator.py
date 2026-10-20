@@ -263,6 +263,15 @@ class KeyRotator:
                     config.azure["speech_key"] = az_keys[0]
                     if not config.azure.get("speech_region"):
                         config.azure["speech_region"] = "eastus"
+
+            # 5. LLM Script & Storyboard Providers (Gemini, OpenAI, DeepSeek, Groq)
+            use_llm_credits = bool(config.bangai_credits.get("use_bang_llm_credits", False))
+            if use_llm_credits:
+                for p in ["gemini", "openai", "deepseek", "groq"]:
+                    cfg_k = f"{p}_api_key"
+                    p_keys = self.get_keys(p)
+                    if p_keys:
+                        config.app[cfg_k] = p_keys[0]
         except Exception as e:
             logger.debug(f"[KeyRotator] sync_to_runtime_config notice: {e}")
 

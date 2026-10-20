@@ -156,6 +156,13 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
     utils.set_current_user_id(user_id)
     config.switch_user_config(user_id)
     
+    # Propagate task-level Bang API Credits flags to runtime config
+    if params_dict.get("use_bangai_credits") or params_dict.get("bang_api_credits"):
+        config.bangai_credits["use_bang_llm_credits"] = True
+        config.bangai_credits["use_bang_j2v_credits"] = True
+        config.bangai_credits["use_bang_voice_credits"] = True
+        config.bangai_credits["use_bang_material_credits"] = True
+    
     task_dir = utils.task_dir(task_id)
     os.makedirs(task_dir, exist_ok=True)
     
@@ -168,6 +175,29 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
     with open(state_file, "w", encoding="utf-8") as f:
         json.dump({"state": "processing", "progress": 10, "task_id": task_id, "step": "Starting generation..."}, f)
     volume.commit()
+
+    # 1. Attach live logger sink so WebUI streams terminal logs below progress bar in real-time
+    log_file = os.path.join(task_dir, "task.log")
+    log_handler_id = None
+    try:
+        from app.services.webui_task import format_log_record
+        log_handler_id = logger.add(
+            log_file,
+            level="DEBUG",
+            format=format_log_record,
+            colorize=False,
+            enqueue=True
+        )
+    except Exception as le:
+        logger.debug(f"Modal Worker logger sink notice: {le}")
+
+    # 2. Synchronize fresh system keys & models from KeyRotator for active Bang API Credits
+    try:
+        from app.services.key_rotator import key_rotator
+        key_rotator.reload_keys(force_remote=True)
+        key_rotator.sync_to_runtime_config()
+    except Exception as ke:
+        logger.debug(f"Modal Worker key_rotator notice: {ke}")
     
     try:
         params = VideoParams(**params_dict)
@@ -293,7 +323,37 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
         with open(state_file, "w", encoding="utf-8") as f:
             json.dump({"state": "failed", "progress": 0, "task_id": task_id, "error": err_str, "trace": traceback.format_exc()}, f)
     finally:
+        if log_handler_id is not None:
+            try:
+                logger.remove(log_handler_id)
+            except Exception:
+                pass
         volume.commit()
+
+
+# Cloud-Native 24-Hour Autonomous Stock Studio Autopilot Scheduler (runs every 15 mins)
+@app.function(
+    image=image,
+    schedule=modal.Cron("*/15 * * * *"),
+    timeout=180
+)
+def stock_studio_autopilot_cron():
+    """
+    Autonomous 24-Hour Stock Studio Autopilot Scheduler:
+    Runs automatically every 15 minutes in Modal cloud, queries BangAI to process any due 24h video automations.
+    Dispatches due topics to Modal GPU cluster and auto-publishes to YouTube.
+    """
+    import requests
+    try:
+        res = requests.post(
+            "https://bangai.netlify.app/.netlify/functions/stock-studio-automation",
+            json={"action": "process-due"},
+            headers={"Content-Type": "application/json"},
+            timeout=120
+        )
+        logger.info(f"Modal Autopilot Cron: Checked due automations (HTTP {res.status_code})")
+    except Exception as e:
+        logger.warning(f"Modal Autopilot Cron notice: {e}")
 
 
 @app.function(

@@ -49,6 +49,7 @@ def _refresh_queued_positions() -> None:
 
 def _append_task_log(task_id: str, message: str) -> None:
     """按任务保存有限数量的日志，供 Streamlit Fragment 安全轮询。"""
+    cleaned = message.rstrip()
     with _task_logs_lock:
         records = _task_logs.get(task_id)
         if records is None:
@@ -57,13 +58,41 @@ def _append_task_log(task_id: str, message: str) -> None:
                 _task_logs.pop(oldest_task_id, None)
             records = deque(maxlen=_MAX_LOG_RECORDS_PER_TASK)
             _task_logs[task_id] = records
-        records.append(message.rstrip())
+        records.append(cleaned)
+
+    try:
+        task_dir = utils.task_dir(task_id)
+        if os.path.isdir(task_dir):
+            with open(os.path.join(task_dir, "task.log"), "a", encoding="utf-8") as lf:
+                lf.write(cleaned + "\n")
+    except Exception:
+        pass
 
 
 def get_task_logs(task_id: str) -> list[str]:
-    """返回日志快照，避免页面渲染期间持有后台线程使用的锁。"""
+    """返回日志快照，支持从内存队列或持久化 task.log 文件回读（适用于跨容器/Modal云工作线程）。"""
     with _task_logs_lock:
-        return list(_task_logs.get(task_id, ()))
+        mem_logs = list(_task_logs.get(task_id, ()))
+    if mem_logs:
+        return mem_logs
+
+    try:
+        import glob
+        task_dir = utils.task_dir(task_id)
+        cand_log_files = [os.path.join(task_dir, "task.log")]
+        base_storage = os.path.abspath(os.path.join(utils.root_dir(), "storage"))
+        cand_log_files += glob.glob(os.path.join(base_storage, "users", "*", "tasks", str(task_id), "task.log"))
+        cand_log_files += glob.glob(os.path.join(base_storage, "tasks", str(task_id), "task.log"))
+        for log_f in cand_log_files:
+            if os.path.isfile(log_f):
+                with open(log_f, "r", encoding="utf-8", errors="replace") as f:
+                    lines = [line.rstrip() for line in f.readlines()]
+                    if lines:
+                        return lines[-_MAX_LOG_RECORDS_PER_TASK:]
+    except Exception:
+        pass
+
+    return []
 
 
 def _run_generation(
