@@ -529,7 +529,8 @@ def generate_audio(
             return reusable_preview
 
         logger.info("no custom audio file provided, using TTS to generate audio.")
-        audio_file = path.join(utils.task_dir(task_id), "audio.mp3")
+        audio_file = os.path.abspath(path.join(utils.task_dir(task_id, create=True), "audio.mp3"))
+        utils.safe_makedirs(os.path.dirname(audio_file), exist_ok=True)
         tts_kwargs = {
             "text": video_script,
             "voice_name": voice.parse_voice_name(params.voice_name),

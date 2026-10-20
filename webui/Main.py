@@ -4251,11 +4251,16 @@ def _open_voice_settings_dialog():
 def _dismiss_automation_dialog():
     """Dismiss 24-Hour Autonomous Autopilot dialog."""
     st.session_state["automation_dialog_open"] = False
+    st.session_state.pop("auto_topics_textarea", None)
+    st.session_state.pop("auto_topics_input", None)
 
 
 def _open_automation_dialog():
     """Open 24-Hour Autonomous Autopilot dialog."""
     st.session_state["automation_dialog_open"] = True
+    st.session_state["automation_data_stale"] = True
+    st.session_state.pop("auto_topics_textarea", None)
+    st.session_state.pop("auto_topics_input", None)
 
 
 def _fetch_stock_studio_automation(user_email, user_id="", token=""):
@@ -6364,7 +6369,7 @@ def _render_automation_dialog():
     with btn_col2:
         if st.button("⚡ Run Today's Topic Now", type="secondary", use_container_width=True, key="run_now_auto_btn"):
             with st.spinner("⏳ Dispatching today's autonomous video task to Modal GPU..."):
-                current_topics_raw = str(st.session_state.get("auto_topics_textarea", "") or st.session_state.get("auto_topics_input", "") or "").strip()
+                current_topics_raw = str(st.session_state.get("auto_topics_textarea", "") or "\n".join(auto.get("upcomingTopics") or [])).strip()
                 current_topics = [t.strip() for t in current_topics_raw.split("\n") if t.strip()]
                 cur_settings = _collect_current_ui_applied_settings()
                 run_payload = {
@@ -6434,26 +6439,29 @@ def _render_automation_dialog():
             sample_text = ["3 Dark Psychological Facts About Human Behavior", "Mind-Blowing Space Scale Facts", "Ancient Inventions Way Ahead of Their Time"]
 
     existing_topics = auto.get("upcomingTopics") or []
-    if "auto_topics_input" not in st.session_state:
-        st.session_state["auto_topics_input"] = "\n".join(existing_topics)
+    db_topics_str = "\n".join(existing_topics)
+    if "auto_topics_textarea" not in st.session_state:
+        st.session_state["auto_topics_textarea"] = db_topics_str
 
     if sample_text:
-        cur_t = [t.strip() for t in st.session_state["auto_topics_input"].split("\n") if t.strip()]
+        current_topics_raw = str(st.session_state.get("auto_topics_textarea", db_topics_str)).strip()
+        cur_t = [t.strip() for t in current_topics_raw.split("\n") if t.strip()]
         for s in sample_text:
             if s not in cur_t:
                 cur_t.append(s)
-        st.session_state["auto_topics_input"] = "\n".join(cur_t)
+        st.session_state["auto_topics_textarea"] = "\n".join(cur_t)
         st.rerun()
 
     topics_val = st.text_area(
         "Upcoming Topics",
-        value=st.session_state.get("auto_topics_input", ""),
+        value=st.session_state.get("auto_topics_textarea", db_topics_str),
         height=140,
         placeholder="Enter topics (one per line)...\nExample:\nTop 5 Unexplained Mysteries of Area 51\nSecrets of Bermuda Triangle Flight 19\nDeep Ocean Ancient Leviathan Legends",
         key="auto_topics_textarea",
         label_visibility="collapsed"
     )
-    topics_list = [t.strip() for t in topics_val.split("\n") if t.strip()]
+    current_raw_topics = str(st.session_state.get("auto_topics_textarea", "") or topics_val or "").strip()
+    topics_list = [t.strip() for t in current_raw_topics.split("\n") if t.strip()]
     st.caption(f"📊 Total queued topics: **{len(topics_list)} topics**")
 
     st.divider()
@@ -6523,11 +6531,13 @@ def _render_automation_dialog():
     if st.button("💾 Save Autopilot Configuration", type="primary", use_container_width=True, key="save_auto_settings_btn"):
         with st.spinner("Saving..."):
             cur_settings = _collect_current_ui_applied_settings()
+            save_topics_raw = str(st.session_state.get("auto_topics_textarea", "") or topics_val or "").strip()
+            save_topics_list = [t.strip() for t in save_topics_raw.split("\n") if t.strip()]
             save_payload = {
                 "action": "save",
                 "email": user_email,
                 "userId": current_uid,
-                "upcomingTopics": topics_list,
+                "upcomingTopics": save_topics_list,
                 "settings": cur_settings,
                 "creditMode": chosen_credit_mode,
                 "autoUploadToYouTube": auto_upload_enabled,
@@ -6535,8 +6545,10 @@ def _render_automation_dialog():
             }
             res = _save_stock_studio_automation(save_payload, token)
             if res.get("success"):
-                st.session_state["automation_data"] = res.get("automation") or save_payload
+                updated_auto = res.get("automation") or save_payload
+                st.session_state["automation_data"] = updated_auto
                 st.session_state["automation_data_stale"] = False
+                st.session_state["auto_topics_textarea"] = "\n".join(updated_auto.get("upcomingTopics") or save_topics_list)
                 st.success("✅ Autopilot configuration saved successfully!")
                 time.sleep(1)
                 st.session_state["automation_dialog_open"] = False

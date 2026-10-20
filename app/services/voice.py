@@ -2554,6 +2554,7 @@ def _convert_urls_to_mp3_local_ffmpeg(
             "-vn",
             "-acodec", "libmp3lame",
             "-b:a", "192k",
+            "-ar", "24000",
             local_mp3,
         ]
         res = subprocess.run(cmd, capture_output=True, check=False)
@@ -2651,17 +2652,66 @@ def json2video_tts(
                 logger.error("Failed to concatenate dual voiceover parts")
                 return None
 
+        # Bulletproof verification: if voice_file does not exist or empty, extract directly to voice_file
+        if not os.path.exists(voice_file) or os.path.getsize(voice_file) == 0:
+            if mp3_files and os.path.exists(mp3_files[0]):
+                shutil.copyfile(mp3_files[0], voice_file)
+            elif mp4_urls:
+                local_raw = os.path.join(temp_dir, "raw_part1.mp4")
+                if os.path.exists(local_raw):
+                    cmd = [
+                        utils.get_ffmpeg_binary(),
+                        "-y",
+                        "-i", local_raw,
+                        "-vn",
+                        "-acodec", "libmp3lame",
+                        "-b:a", "192k",
+                        "-ar", "24000",
+                        voice_file,
+                    ]
+                    subprocess.run(cmd, capture_output=True, check=False)
+
+        if not os.path.exists(voice_file) or os.path.getsize(voice_file) == 0:
+            raise FileNotFoundError(f"Final audio file was not written to: {voice_file}")
+
         try:
             import modal
             modal.Volume.from_name("bangai-storage").commit()
         except Exception:
             pass
 
-        audio_clip = AudioFileClip(voice_file)
+        # Robust duration calculation with multiple fail-safes (avoiding AudioFileClip crash)
+        audio_duration = 0.0
         try:
-            audio_duration = audio_clip.duration
-        finally:
-            audio_clip.close()
+            audio_duration = float(get_audio_duration(voice_file) or 0.0)
+        except Exception:
+            pass
+
+        if audio_duration <= 0:
+            try:
+                cmd = [
+                    "ffprobe",
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    voice_file,
+                ]
+                res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                if res.returncode == 0 and res.stdout.strip():
+                    audio_duration = float(res.stdout.strip())
+            except Exception:
+                pass
+
+        if audio_duration <= 0:
+            try:
+                with AudioFileClip(voice_file) as audio_clip:
+                    audio_duration = float(audio_clip.duration or 0.0)
+            except Exception as probe_err:
+                logger.warning(f"AudioFileClip probe notice: {probe_err}")
+
+        if audio_duration <= 0:
+            # Safe text-based fallback duration (~140 wpm)
+            audio_duration = max(3.0, (word_count / 2.3) / max(0.5, float(voice_rate or 1.0)))
 
         sub_maker = ensure_legacy_submaker_fields(SubMaker())
         logger.success(f"json2video ElevenLabs Premium TTS succeeded: {voice_file} (duration: {audio_duration:.2f}s)")
