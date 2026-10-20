@@ -1200,14 +1200,14 @@ def convert_rate_to_percent(rate: float) -> str:
 def ensure_file_path_exists(file_path: str) -> None:
     """
     确保输出文件所在目录一定存在。
-
-    这里单独做一层兜底，是因为 edge_tts 7.x 在真正发起网络请求之前，
-    就会先打开目标音频文件；如果目录不存在，会直接因为本地文件路径报错，
-    从而掩盖真正的 TTS 行为结果。
+    使用 utils.safe_makedirs 保证在 Modal FUSE 云卷 (/root/storage) 上绝对安全可靠地逐级创建。
     """
-    dir_path = os.path.dirname(file_path)
+    if not file_path:
+        return
+    abs_path = os.path.abspath(str(file_path).strip())
+    dir_path = os.path.dirname(abs_path)
     if dir_path:
-        os.makedirs(dir_path, exist_ok=True)
+        utils.safe_makedirs(dir_path, exist_ok=True)
 
 
 def ensure_legacy_submaker_fields(sub_maker: SubMaker) -> SubMaker:
@@ -1457,6 +1457,7 @@ def stream_edge_tts_chunks(
 def azure_tts_v1(
     text: str, voice_name: str, voice_rate: float, voice_file: str
 ) -> Union[SubMaker, None]:
+    voice_file = os.path.abspath(str(voice_file).strip())
     voice_name = parse_voice_name(voice_name)
     text = text.strip()
     rate_str = convert_rate_to_percent(voice_rate)
@@ -2601,6 +2602,7 @@ def json2video_tts(
     char_count = len(clean_text)
     is_over_60s = word_count > 120 or char_count > 700
 
+    voice_file = os.path.abspath(str(voice_file).strip())
     should_split = split_long_audio and is_over_60s
     ensure_file_path_exists(voice_file)
 
@@ -2641,12 +2643,19 @@ def json2video_tts(
             logger.error("Failed to obtain MP3 audio files from json2video render")
             return None
 
+        ensure_file_path_exists(voice_file)
         if len(mp3_files) == 1:
             shutil.copyfile(mp3_files[0], voice_file)
         else:
             if not _concat_audio_files(mp3_files, voice_file):
                 logger.error("Failed to concatenate dual voiceover parts")
                 return None
+
+        try:
+            import modal
+            modal.Volume.from_name("bangai-storage").commit()
+        except Exception:
+            pass
 
         audio_clip = AudioFileClip(voice_file)
         try:

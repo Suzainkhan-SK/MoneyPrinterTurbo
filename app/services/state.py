@@ -77,7 +77,7 @@ class MemoryState(BaseState):
     def update_task(
         self,
         task_id: str,
-        state: int = const.TASK_STATE_PROCESSING,
+        state: Union[int, str] = const.TASK_STATE_PROCESSING,
         progress: int = 0,
         **kwargs,
     ):
@@ -219,7 +219,7 @@ class RedisState(BaseState):
     def update_task(
         self,
         task_id: str,
-        state: int = const.TASK_STATE_PROCESSING,
+        state: Union[int, str] = const.TASK_STATE_PROCESSING,
         progress: int = 0,
         **kwargs,
     ):

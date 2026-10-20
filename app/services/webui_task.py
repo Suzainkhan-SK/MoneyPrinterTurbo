@@ -81,8 +81,8 @@ def get_task_logs(task_id: str) -> list[str]:
         task_dir = utils.task_dir(task_id)
         cand_log_files = [os.path.join(task_dir, "task.log")]
         base_storage = os.path.abspath(os.path.join(utils.root_dir(), "storage"))
-        cand_log_files += glob.glob(os.path.join(base_storage, "users", "*", "tasks", str(task_id), "task.log"))
-        cand_log_files += glob.glob(os.path.join(base_storage, "tasks", str(task_id), "task.log"))
+        cand_log_files += glob.glob(os.path.join(base_storage, "users", "*", "tasks", task_id, "task.log"))
+        cand_log_files += glob.glob(os.path.join(base_storage, "tasks", task_id, "task.log"))
         for log_f in cand_log_files:
             if os.path.isfile(log_f):
                 with open(log_f, "r", encoding="utf-8", errors="replace") as f:
@@ -220,13 +220,9 @@ def submit_generation(
     """
     task_params = params.model_copy(deep=True)
     voice_preview_snapshot = dict(voice_preview) if voice_preview else None
-    voxcpm_reference_audio_snapshot = (
-        bytes(voxcpm_reference_audio) if voxcpm_reference_audio else None
-    )
-    voxcpm_prompt_audio_snapshot = (
-        bytes(voxcpm_prompt_audio) if voxcpm_prompt_audio else None
-    )
-    voxcpm_prompt_text_snapshot = str(voxcpm_prompt_text or "")
+    voxcpm_reference_audio_snapshot = voxcpm_reference_audio
+    voxcpm_prompt_audio_snapshot = voxcpm_prompt_audio
+    voxcpm_prompt_text_snapshot = voxcpm_prompt_text or ""
     loomloom_request_snapshot = loomloom_video_request
 
     with _task_manager.lock:
@@ -240,7 +236,8 @@ def submit_generation(
         est_wait = f"{max(1, round(pos * 1.5))} min" if pos <= 2 else f"{round(pos * 1.5)} mins"
         sm.state.update_task(
             task_id,
-            state="queued",
+            state=const.TASK_STATE_QUEUED,
+            status="queued",
             progress=0,
             queue_position=pos,
             estimated_wait=est_wait,
