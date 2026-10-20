@@ -172,13 +172,23 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
     try:
         params = VideoParams(**params_dict)
         logger.info(f"Modal Worker: Processing task {task_id}")
-        tm._run_pipeline(task_id=task_id, params=params, stop_at=stop_at)
+        pipeline_res = tm._run_pipeline(task_id=task_id, params=params, stop_at=stop_at)
         
         final_video = f"{task_dir}/final-1.mp4"
         if os.path.exists(final_video):
             logger.success(f"Modal Worker: Task {task_id} completed successfully")
             final_dl_url = f"https://cmpunktg--bangai-stock-studio-serve.modal.run/api/bangai/download/{task_id}/final-1.mp4"
+            
+            existing_st = {}
+            if os.path.exists(state_file):
+                try:
+                    with open(state_file, "r", encoding="utf-8") as sf:
+                        existing_st = json.load(sf)
+                except Exception:
+                    pass
+
             task_state_payload = {
+                **existing_st,
                 "state": 1,
                 "status": "complete",
                 "progress": 100,
@@ -187,6 +197,9 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
                 "video_url": f"/api/bangai/download/{task_id}/final-1.mp4",
                 "video_subject": params_dict.get("video_subject", "")
             }
+            if isinstance(pipeline_res, dict) and pipeline_res.get("youtube_url"):
+                task_state_payload["youtube_url"] = pipeline_res["youtube_url"]
+                task_state_payload["youtube_channel_title"] = pipeline_res.get("youtube_channel_title", "")
             with open(state_file, "w", encoding="utf-8") as f:
                 json.dump(task_state_payload, f, default=str)
             volume.commit()
@@ -347,9 +360,10 @@ def serve():
     @bangai_router.post("/generate")
     async def bangai_generate(request: Request):
         body = await request.json()
-        task_id = str(uuid4())
+        task_id = str(body.get("task_id") or uuid4()).strip()
+        stop_at = str(body.get("stop_at") or "video").strip()
         
-        render_task_worker.spawn(task_id, body, "video")
+        render_task_worker.spawn(task_id, body, stop_at)
         
         return {
             "status": 200,
@@ -426,8 +440,12 @@ def serve():
             if not user_id:
                 user_id = "default_user"
 
-            # Determine state
+            # Determine state with Stale Task Watchdog
+            now_ts = time.time()
             raw_state = state_data.get("state")
+            task_updated = float(state_data.get("updated_at") or mtime or now_ts)
+            task_age = now_ts - task_updated
+
             if has_video:
                 status_str = "completed"
                 progress = 100
@@ -437,6 +455,18 @@ def serve():
             elif raw_state in (1, "complete"):
                 status_str = "completed"
                 progress = 100
+            elif task_age > 1200:  # 20 minutes without completion
+                status_str = "failed"
+                progress = int(state_data.get("progress", 0) or 0)
+                state_data["state"] = -1
+                state_data["status"] = "failed"
+                state_data["error"] = state_data.get("error") or "Task timed out: worker container terminated or stalled"
+                state_data["failed_stage"] = state_data.get("failed_stage") or "timeout"
+                try:
+                    with open(state_file, "w", encoding="utf-8") as sf:
+                        json.dump(state_data, sf, default=str)
+                except Exception:
+                    pass
             else:
                 status_str = "rendering"
                 progress = int(state_data.get("progress", 10) or 10)
@@ -517,6 +547,21 @@ def serve():
             try:
                 with open(state_file, "r", encoding="utf-8") as f:
                     state_data = json.load(f)
+                    
+                    # Watchdog check for stale tasks
+                    raw_st = state_data.get("state")
+                    task_updated = float(state_data.get("updated_at") or os.path.getmtime(state_file) or time.time())
+                    if raw_st not in (-1, "failed", 1, "complete") and (time.time() - task_updated > 1200):
+                        state_data["state"] = -1
+                        state_data["status"] = "failed"
+                        state_data["error"] = state_data.get("error") or "Task timed out: worker container terminated or stalled"
+                        state_data["failed_stage"] = state_data.get("failed_stage") or "timeout"
+                        try:
+                            with open(state_file, "w", encoding="utf-8") as sf:
+                                json.dump(state_data, sf, default=str)
+                        except Exception:
+                            pass
+
                     if state_data.get("video_url"):
                         vurl = state_data["video_url"]
                         if vurl.startswith("/"):

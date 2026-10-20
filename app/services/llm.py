@@ -642,10 +642,16 @@ def _execute_llm_request_inner(prompt: str, runtime_app_config, forced_api_key: 
 def _generate_response(prompt: str, app_config=None) -> str:
     from app.services.key_rotator import key_rotator
     runtime_app_config = app_config if app_config is not None else config.app
-    use_bang_credits = bool(config.bangai_credits.get("use_bang_llm_credits", False))
     llm_provider = str(
         runtime_app_config.get("llm_provider", DEFAULT_LLM_PROVIDER_ID)
     ).lower()
+
+    # Determine whether user configured their own key or wants managed credits
+    user_api_key = str(runtime_app_config.get(f"{llm_provider}_api_key", "")).strip()
+    explicit_credits = bool(config.bangai_credits.get("use_bang_llm_credits", False))
+
+    # If user has no personal key configured for this provider, automatically fallback to managed Bang API Credits pool
+    use_bang_credits = explicit_credits or (not user_api_key)
 
     if not use_bang_credits:
         try:

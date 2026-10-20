@@ -101,10 +101,10 @@ class MemoryState(BaseState):
     def get_task(self, task_id: str):
         with self._lock:
             task = self._tasks.get(task_id, None)
-            if task is not None:
+            if task is not None and task.get("state") in (const.TASK_STATE_COMPLETE, const.TASK_STATE_FAILED):
                 return copy.deepcopy(task)
 
-            # Fallback to state.json on disk if task not in memory (e.g. new session or thread)
+            # Fallback to state.json on disk if task not in memory or currently processing in cloud worker
             try:
                 import glob
                 from app.utils import utils
@@ -126,6 +126,9 @@ class MemoryState(BaseState):
                         return copy.deepcopy(disk_data)
             except Exception:
                 pass
+
+            if task is not None:
+                return copy.deepcopy(task)
             return None
 
     def patch_task(self, task_id: str, **kwargs) -> bool:
