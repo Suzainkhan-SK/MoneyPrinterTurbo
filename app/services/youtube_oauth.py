@@ -292,7 +292,7 @@ class YouTubeOAuthService:
             params["token"] = token
 
         try:
-            res = requests.get(url, headers=headers, params=params, timeout=4)
+            res = requests.get(url, headers=headers, params=params, timeout=15)
             if res.ok:
                 data = res.json()
                 channels = data.get("channels", [])

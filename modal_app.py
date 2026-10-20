@@ -239,13 +239,15 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
             volume.commit()
             
             # Autopilot: Automatic YouTube Upload if enabled
+            yt_video_url = ""
             if params_dict.get("auto_upload_youtube") and params_dict.get("user_youtube_access_token"):
                 try:
                     import requests
                     import re
-                    yt_webhook = params_dict.get("youtube_webhook_url") or "https://cmpunktg29.app.n8n.cloud/webhook/viral-shorts-ai-youtube-upload"
+                    import time
+                    yt_webhook = params_dict.get("youtube_webhook_url") or "https://cmpunktg33.app.n8n.cloud/webhook/viral-shorts-ai-youtube-upload"
                     subj = params_dict.get("video_subject") or "Viral Stock Studio Short"
-                    logger.info(f"Modal Worker: Auto-uploading video {task_id} ('{subj}') to YouTube...")
+                    logger.info(f"Modal Worker: Auto-uploading video {task_id} ('{subj}') to YouTube via {yt_webhook}...")
                     yt_payload = {
                         "videoUrl": final_dl_url,
                         "title": subj[:95],
@@ -263,7 +265,6 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
                     yt_res = requests.post(yt_webhook, json=yt_payload, timeout=45)
                     logger.info(f"Modal Worker: YouTube auto-upload status for {task_id}: {yt_res.status_code}")
                     
-                    yt_video_url = ""
                     try:
                         y_data = yt_res.json()
                         if isinstance(y_data, list) and len(y_data) > 0:
@@ -287,26 +288,32 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
                             if id_match:
                                 yt_video_url = f"https://youtube.com/shorts/{id_match.group(1)}"
 
-                    # Reliable fallback: query YouTube channel directly to get the uploaded short URL
+                    # Reliable fallback: poll YouTube channel directly (with retries for asynchronous n8n execution)
                     if not yt_video_url and params_dict.get("user_youtube_access_token"):
-                        try:
-                            ch_id = params_dict.get("user_youtube_channel_id", "")
-                            yt_api_url = "https://www.googleapis.com/youtube/v3/search?part=snippet&order=date&type=video&maxResults=3"
-                            if ch_id:
-                                yt_api_url += f"&channelId={ch_id}"
-                            q_res = requests.get(yt_api_url, headers={"Authorization": f"Bearer {params_dict.get('user_youtube_access_token')}"}, timeout=10)
-                            if q_res.status_code == 200:
-                                items = q_res.json().get("items", [])
-                                for item in items:
-                                    v_title = item.get("snippet", {}).get("title", "")
-                                    v_id = item.get("id", {}).get("videoId")
-                                    if v_id and (v_title.lower() in subj.lower() or subj.lower() in v_title.lower()):
-                                        yt_video_url = f"https://youtube.com/shorts/{v_id}"
+                        ch_id = params_dict.get("user_youtube_channel_id", "")
+                        yt_api_url = "https://www.googleapis.com/youtube/v3/search?part=snippet&order=date&type=video&maxResults=5"
+                        if ch_id:
+                            yt_api_url += f"&channelId={ch_id}"
+                        for poll_attempt in range(5):
+                            try:
+                                time.sleep(3)
+                                q_res = requests.get(yt_api_url, headers={"Authorization": f"Bearer {params_dict.get('user_youtube_access_token')}"}, timeout=10)
+                                if q_res.status_code == 200:
+                                    items = q_res.json().get("items", [])
+                                    for item in items:
+                                        v_title = item.get("snippet", {}).get("title", "")
+                                        v_id = item.get("id", {}).get("videoId")
+                                        if v_id and (v_title.lower() in subj.lower() or subj.lower() in v_title.lower()):
+                                            yt_video_url = f"https://youtube.com/shorts/{v_id}"
+                                            logger.info(f"Modal Worker: Discovered uploaded YouTube video ID {v_id} on attempt {poll_attempt + 1}")
+                                            break
+                                    if yt_video_url:
                                         break
-                                if not yt_video_url and items and items[0].get("id", {}).get("videoId"):
-                                    yt_video_url = f"https://youtube.com/shorts/{items[0]['id']['videoId']}"
-                        except Exception as q_err:
-                            logger.warning(f"YouTube search fallback error: {q_err}")
+                                    if not yt_video_url and items and poll_attempt >= 3 and items[0].get("id", {}).get("videoId"):
+                                        yt_video_url = f"https://youtube.com/shorts/{items[0]['id']['videoId']}"
+                                        break
+                            except Exception as q_err:
+                                logger.warning(f"YouTube search fallback attempt {poll_attempt + 1} error: {q_err}")
 
                     task_state_payload["youtube_url"] = yt_video_url
                     task_state_payload["youtube_channel_title"] = params_dict.get("user_youtube_channel_title", "")
@@ -316,9 +323,36 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
                     volume.commit()
                 except Exception as ye:
                     logger.warning(f"Modal Worker: YouTube auto-upload warning for {task_id}: {ye}")
+
+            # Notify BangAI Netlify backend & MongoDB Atlas about task completion
+            try:
+                import requests
+                netlify_cb = "https://bangai.netlify.app/.netlify/functions/stock-studio-automation"
+                cb_payload = {
+                    "action": "task-completed",
+                    "taskId": task_id,
+                    "status": "complete",
+                    "videoUrl": final_dl_url,
+                    "youtubeUrl": yt_video_url or task_state_payload.get("youtube_url", ""),
+                    "channelTitle": params_dict.get("user_youtube_channel_title", ""),
+                    "channelId": params_dict.get("user_youtube_channel_id", ""),
+                    "userId": params_dict.get("user_id", "")
+                }
+                requests.post(netlify_cb, json=cb_payload, timeout=8)
+                logger.info(f"Modal Worker: Synced completion for {task_id} to BangAI backend.")
+            except Exception as cbe:
+                logger.debug(f"Modal Worker: Netlify backend sync notice: {cbe}")
         else:
+            existing_err = ""
+            if os.path.exists(state_file):
+                try:
+                    with open(state_file, "r", encoding="utf-8") as sf:
+                        st = json.load(sf)
+                        existing_err = st.get("error") or ""
+                except Exception:
+                    pass
             with open(state_file, "w", encoding="utf-8") as f:
-                json.dump({"state": -1, "status": "failed", "progress": 0, "task_id": task_id, "error": "Render completed but final video file not found"}, f)
+                json.dump({"state": -1, "status": "failed", "progress": 0, "task_id": task_id, "error": existing_err or "Render completed but final video file not found"}, f)
             volume.commit()
     except Exception as e:
         import traceback
@@ -606,16 +640,45 @@ def serve():
         tasks_list.sort(key=lambda x: x.get("mtime", 0), reverse=True)
         return {"status": 200, "data": {"tasks": tasks_list[:limit], "total": len(tasks_list)}}
         
+    def _resolve_task_dir(task_id: str) -> str:
+        import glob
+        candidates = []
+        for p in glob.glob(f"/root/storage/users/*/tasks/{task_id}"):
+            if os.path.isdir(p):
+                candidates.append(p)
+        glob_p = f"/root/storage/tasks/{task_id}"
+        if os.path.isdir(glob_p):
+            candidates.append(glob_p)
+
+        # 1. Prioritize candidate with final-1.mp4 (>1024 bytes)
+        for c in candidates:
+            mp4 = os.path.join(c, "final-1.mp4")
+            if os.path.exists(mp4) and os.path.getsize(mp4) > 1024:
+                return c
+
+        # 2. Prioritize candidate with state.json
+        for c in candidates:
+            st = os.path.join(c, "state.json")
+            if os.path.exists(st):
+                return c
+
+        # 3. Prioritize candidate with any files
+        for c in candidates:
+            try:
+                if os.listdir(c):
+                    return c
+            except Exception:
+                pass
+
+        if candidates:
+            return candidates[0]
+        return f"/root/storage/tasks/{task_id}"
+
     @bangai_router.get("/task/{task_id}")
     async def bangai_task_status(task_id: str, request: Request):
-        import glob
         volume.reload()
         base_url = str(request.base_url).rstrip('/')
-        task_dir = f"/root/storage/tasks/{task_id}"
-        if not os.path.exists(task_dir):
-            matches = glob.glob(f"/root/storage/users/*/tasks/{task_id}")
-            if matches:
-                task_dir = matches[0]
+        task_dir = _resolve_task_dir(task_id)
                 
         state_file = f"{task_dir}/state.json"
         if os.path.exists(state_file):
@@ -672,31 +735,27 @@ def serve():
                 "status": 200,
                 "data": {
                     "state": "complete",
+                    "status": "complete",
                     "progress": 100,
                     "task_id": task_id,
                     "video_url": f"{base_url}/api/bangai/download/{task_id}/final-1.mp4"
                 }
             }
         elif os.path.exists(combined_mp4):
-            return {"status": 200, "data": {"state": "processing", "progress": 85, "task_id": task_id, "step": "Rendering final composition..."}}
+            return {"status": 200, "data": {"state": "processing", "status": "rendering", "progress": 85, "task_id": task_id, "step": "Rendering final composition..."}}
         elif os.path.exists(subtitle_srt):
-            return {"status": 200, "data": {"state": "processing", "progress": 65, "task_id": task_id, "step": "Downloading stock footage & subtitles..."}}
+            return {"status": 200, "data": {"state": "processing", "status": "rendering", "progress": 65, "task_id": task_id, "step": "Downloading stock footage & subtitles..."}}
         elif os.path.exists(audio_mp3):
-            return {"status": 200, "data": {"state": "processing", "progress": 40, "task_id": task_id, "step": "Synthesizing neural voice..."}}
-        elif os.path.exists(script_json) or os.path.exists(task_dir):
-            return {"status": 200, "data": {"state": "processing", "progress": 20, "task_id": task_id, "step": "Generating AI script..."}}
+            return {"status": 200, "data": {"state": "processing", "status": "rendering", "progress": 40, "task_id": task_id, "step": "Synthesizing neural voice..."}}
+        elif os.path.exists(script_json) or (os.path.exists(task_dir) and os.listdir(task_dir)):
+            return {"status": 200, "data": {"state": "processing", "status": "rendering", "progress": 20, "task_id": task_id, "step": "Generating AI script..."}}
         else:
-            return {"status": 200, "data": {"state": "processing", "progress": 10, "task_id": task_id, "step": "Task queued..."}}
+            return {"status": 200, "data": {"state": "processing", "status": "rendering", "progress": 10, "task_id": task_id, "step": "Task queued..."}}
 
     @bangai_router.get("/task/{task_id}/logs")
     async def bangai_task_logs(task_id: str):
-        import glob
         volume.reload()
-        task_dir = f"/root/storage/tasks/{task_id}"
-        if not os.path.exists(task_dir):
-            matches = glob.glob(f"/root/storage/users/*/tasks/{task_id}")
-            if matches:
-                task_dir = matches[0]
+        task_dir = _resolve_task_dir(task_id)
 
         log_file = os.path.join(task_dir, "task.log")
         logs = []
@@ -839,12 +898,15 @@ def serve():
     async def bangai_download(task_id: str, filename: str):
         import glob
         volume.reload()
-        file_path = f"/root/storage/tasks/{task_id}/{filename}"
+        task_dir = _resolve_task_dir(task_id)
+        file_path = os.path.join(task_dir, filename)
         if not os.path.exists(file_path):
-            matches = glob.glob(f"/root/storage/users/*/tasks/{task_id}/{filename}")
-            if matches and os.path.exists(matches[0]):
-                file_path = matches[0]
-            else:
+            matches = glob.glob(f"/root/storage/users/*/tasks/{task_id}/{filename}") + glob.glob(f"/root/storage/tasks/{task_id}/{filename}")
+            for m in matches:
+                if os.path.exists(m) and os.path.getsize(m) > 0:
+                    file_path = m
+                    break
+            if not os.path.exists(file_path):
                 raise HTTPException(status_code=404, detail="File not found")
         return FileResponse(
             file_path,
