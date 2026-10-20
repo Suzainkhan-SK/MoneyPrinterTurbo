@@ -70,7 +70,8 @@ class KeyRotator:
                 self._apply_raw_pools(loaded_data)
                 self._last_loaded = now
                 try:
-                    os.makedirs(STORAGE_DIR, exist_ok=True)
+                    if not os.path.exists(STORAGE_DIR):
+                        os.makedirs(STORAGE_DIR, exist_ok=True)
                     with open(SYSTEM_KEYS_FILE, "w", encoding="utf-8") as f:
                         json.dump(loaded_data, f, indent=2)
                 except Exception:
@@ -428,7 +429,8 @@ class KeyRotator:
         with self._lock:
             self._apply_raw_pools(keys_data)
             try:
-                os.makedirs(STORAGE_DIR, exist_ok=True)
+                if not os.path.exists(STORAGE_DIR):
+                    os.makedirs(STORAGE_DIR, exist_ok=True)
                 with open(SYSTEM_KEYS_FILE, "w", encoding="utf-8") as f:
                     json.dump(keys_data, f, indent=2)
                 logger.success(f"[KeyRotator] Persisted updated keys to {SYSTEM_KEYS_FILE}")
@@ -438,7 +440,8 @@ class KeyRotator:
     def _persist_current_state(self):
         """Quietly updates storage file with fail_count and cooldown states."""
         try:
-            os.makedirs(STORAGE_DIR, exist_ok=True)
+            if not os.path.exists(STORAGE_DIR):
+                os.makedirs(STORAGE_DIR, exist_ok=True)
             with open(SYSTEM_KEYS_FILE, "w", encoding="utf-8") as f:
                 json.dump(self._pools, f, indent=2)
         except Exception:

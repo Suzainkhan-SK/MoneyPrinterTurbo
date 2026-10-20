@@ -167,8 +167,8 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
         config.bangai_credits["use_bang_voice_credits"] = True
         config.bangai_credits["use_bang_material_credits"] = True
     
-    task_dir = utils.task_dir(task_id)
-    os.makedirs(task_dir, exist_ok=True)
+    task_dir = utils.task_dir(task_id, create=True)
+    utils.safe_makedirs(task_dir, exist_ok=True)
     
     # Persist input settings and parameters for task auditing & Admin Panel inspection
     params_file = f"{task_dir}/params.json"
@@ -335,7 +335,6 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
         volume.commit()
 
 
-# Cloud-Native 24-Hour Autonomous Stock Studio Autopilot Scheduler (runs every 15 mins)
 @app.function(
     image=image,
     schedule=modal.Cron("*/15 * * * *"),
@@ -348,16 +347,21 @@ def stock_studio_autopilot_cron():
     Dispatches due topics to Modal GPU cluster and auto-publishes to YouTube.
     """
     import requests
-    try:
-        res = requests.post(
-            "https://bangai.netlify.app/.netlify/functions/stock-studio-automation",
-            json={"action": "process-due"},
-            headers={"Content-Type": "application/json"},
-            timeout=120
-        )
-        logger.info(f"Modal Autopilot Cron: Checked due automations (HTTP {res.status_code})")
-    except Exception as e:
-        logger.warning(f"Modal Autopilot Cron notice: {e}")
+    endpoints = [
+        "https://bangai.netlify.app/.netlify/functions/stock-studio-automation",
+        "https://bangai.netlify.app/.netlify/functions/template-automation",
+    ]
+    for ep in endpoints:
+        try:
+            res = requests.post(
+                ep,
+                json={"action": "cron-runner"},
+                headers={"Content-Type": "application/json"},
+                timeout=120
+            )
+            logger.info(f"Modal Autopilot Cron: {ep} returned HTTP {res.status_code}")
+        except Exception as e:
+            logger.warning(f"Modal Autopilot Cron notice ({ep}): {e}")
 
 
 @app.function(
@@ -683,6 +687,61 @@ def serve():
             return {"status": 200, "data": {"state": "processing", "progress": 20, "task_id": task_id, "step": "Generating AI script..."}}
         else:
             return {"status": 200, "data": {"state": "processing", "progress": 10, "task_id": task_id, "step": "Task queued..."}}
+
+    @bangai_router.get("/task/{task_id}/logs")
+    async def bangai_task_logs(task_id: str):
+        import glob
+        volume.reload()
+        task_dir = f"/root/storage/tasks/{task_id}"
+        if not os.path.exists(task_dir):
+            matches = glob.glob(f"/root/storage/users/*/tasks/{task_id}")
+            if matches:
+                task_dir = matches[0]
+
+        log_file = os.path.join(task_dir, "task.log")
+        logs = []
+        if os.path.exists(log_file):
+            try:
+                with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                    logs = [line.rstrip() for line in f.readlines()]
+            except Exception as e:
+                logs = [f"Error reading log file: {e}"]
+        else:
+            try:
+                from app.services import webui_task
+                logs = webui_task.get_task_logs(task_id)
+            except Exception:
+                pass
+
+        return {
+            "status": 200,
+            "task_id": task_id,
+            "logs": logs[-600:],
+            "count": len(logs)
+        }
+
+    @bangai_router.delete("/task/{task_id}")
+    async def bangai_delete_task(task_id: str):
+        import glob
+        import shutil
+        volume.reload()
+        deleted = False
+        storage_root = "/root/storage"
+        matches = glob.glob(f"{storage_root}/users/*/tasks/{task_id}") + glob.glob(f"{storage_root}/tasks/{task_id}")
+        for d in set(matches):
+            if os.path.isdir(d):
+                try:
+                    shutil.rmtree(d)
+                    deleted = True
+                except Exception:
+                    pass
+        try:
+            from app.services import state as sm
+            sm.state.delete_task(task_id)
+        except Exception:
+            pass
+        volume.commit()
+        return {"status": 200, "deleted": deleted, "task_id": task_id}
 
     @bangai_router.post("/clear-cache")
     async def bangai_clear_cache():

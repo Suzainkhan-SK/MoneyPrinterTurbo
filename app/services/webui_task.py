@@ -115,7 +115,22 @@ def _run_generation(
 
     task_user_id = params.user_id or utils.get_current_user_id() or "guest"
     utils.set_current_user_id(task_user_id)
-    config.switch_user_config(task_user_id)
+    try:
+        import modal
+        modal.Volume.from_name("bangai-storage").reload()
+    except Exception:
+        pass
+
+    try:
+        config.switch_user_config(task_user_id)
+    except Exception as sw_err:
+        logger.warning(f"switch_user_config non-fatal note: {sw_err}")
+
+    try:
+        # Pre-create task dir using safe_makedirs
+        utils.task_dir(task_id, create=True)
+    except Exception as td_err:
+        logger.warning(f"task_dir initialization note: {td_err}")
 
     sm.state.update_task(
         task_id,

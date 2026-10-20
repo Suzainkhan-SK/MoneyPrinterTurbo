@@ -189,8 +189,11 @@ class YouTubeOAuthService:
 
         # 6. Check persisted user auth file on disk if user_id known
         if resolved_uid and resolved_uid not in ("guest", "default_user"):
-            for base_dir in ["storage", "/root/storage"]:
-                auth_file = os.path.join(base_dir, "users", resolved_uid, "auth.json")
+            base_paths = [os.path.join(utils.root_dir(), "storage")]
+            if os.path.exists("/root/storage") and "/root/storage" not in base_paths:
+                base_paths.append("/root/storage")
+            for base_dir in base_paths:
+                auth_file = os.path.abspath(os.path.join(base_dir, "users", resolved_uid, "auth.json"))
                 if os.path.isfile(auth_file):
                     try:
                         with open(auth_file, "r", encoding="utf-8") as f:
@@ -237,10 +240,13 @@ class YouTubeOAuthService:
         if email_str:
             self._cached_email = email_str
 
-        for base_path in ["storage", "/root/storage"]:
-            user_dir = os.path.join(base_path, "users", clean_uid)
+        base_paths = [os.path.join(utils.root_dir(), "storage")]
+        if os.path.exists("/root/storage") and "/root/storage" not in base_paths:
+            base_paths.append("/root/storage")
+        for base_path in base_paths:
+            user_dir = os.path.abspath(os.path.join(base_path, "users", clean_uid))
             try:
-                os.makedirs(user_dir, exist_ok=True)
+                utils.safe_makedirs(user_dir, exist_ok=True)
                 auth_file = os.path.join(user_dir, "auth.json")
                 with open(auth_file, "w", encoding="utf-8") as f:
                     json.dump(
@@ -579,11 +585,12 @@ class YouTubeOAuthService:
         privacy_status: str,
     ):
         """Update task's state.json so Task Manager permanently displays the published YouTube status."""
+        base_storage = os.path.abspath(os.path.join(utils.root_dir(), "storage"))
         possible_dirs = [
-            f"storage/tasks/{task_id}",
+            os.path.join(base_storage, "tasks", str(task_id)),
             f"/root/storage/tasks/{task_id}",
         ]
-        matches = glob.glob(f"storage/users/*/tasks/{task_id}") + glob.glob(
+        matches = glob.glob(os.path.join(base_storage, "users", "*", "tasks", str(task_id))) + glob.glob(
             f"/root/storage/users/*/tasks/{task_id}"
         )
         possible_dirs.extend(matches)

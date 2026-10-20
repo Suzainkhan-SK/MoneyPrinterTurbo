@@ -95,25 +95,37 @@ def root_dir():
 def safe_makedirs(path: str, exist_ok: bool = True):
     if not path:
         return
-    if os.path.exists(path):
+    abs_path = os.path.abspath(str(path).strip())
+    if os.path.exists(abs_path):
+        return
+    # Never attempt to re-create system mount points
+    if abs_path in ("/", "/root", "/root/storage"):
         return
     try:
-        os.makedirs(path, exist_ok=exist_ok)
+        os.makedirs(abs_path, exist_ok=exist_ok)
     except OSError as e:
-        if getattr(e, "errno", None) in (1, 17):
+        err_no = getattr(e, "errno", None)
+        if err_no in (1, 13, 17):  # EPERM, EACCES, EEXIST
             try:
                 import modal
                 modal.Volume.from_name("bangai-storage").reload()
             except Exception:
                 pass
-            if os.path.exists(path):
+            if os.path.exists(abs_path):
                 return
             try:
-                os.makedirs(path, exist_ok=True)
+                os.makedirs(abs_path, exist_ok=True)
             except Exception:
                 pass
-        else:
-            raise
+            if os.path.exists(abs_path):
+                return
+        # If directory exists despite exception, suppress safely
+        if os.path.exists(abs_path):
+            return
+        # If running inside Modal container and error is EPERM on a storage path, suppress if parent exists
+        if err_no == 1 and "/storage" in abs_path:
+            return
+        raise
 
 
 _thread_local = threading.local()
@@ -151,6 +163,7 @@ def storage_dir(sub_dir: str = "", create: bool = False):
         d = os.path.join(root_dir(), "storage")
     if sub_dir:
         d = os.path.join(d, sub_dir)
+    d = os.path.abspath(d)
     if create:
         safe_makedirs(d, exist_ok=True)
 
@@ -161,13 +174,14 @@ def resource_dir(sub_dir: str = ""):
     d = os.path.join(root_dir(), "resource")
     if sub_dir:
         d = os.path.join(d, sub_dir)
-    return d
+    return os.path.abspath(d)
 
 
 def task_dir(sub_dir: str = "", create: bool = True, **kwargs):
     d = os.path.join(storage_dir(), "tasks")
     if sub_dir:
         d = os.path.join(d, sub_dir)
+    d = os.path.abspath(d)
     if create:
         safe_makedirs(d, exist_ok=True)
     return d

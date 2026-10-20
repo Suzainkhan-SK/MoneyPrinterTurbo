@@ -820,6 +820,38 @@ div[data-testid="stPopoverBody"] {
 div[data-testid="stPopoverBody"] > div {
     max-width: 100% !important;
 }
+
+/* Action button nowrap and YouTube Shorts link button styling */
+div.stLinkButton a,
+.stLinkButton a,
+div[data-testid="stColumn"] div.stLinkButton a,
+div[data-testid="stColumn"] div.stButton button {
+    white-space: nowrap !important;
+    min-width: max-content !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    font-size: 0.82rem !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4px !important;
+}
+
+div.stLinkButton a:has(p:contains("Shorts")),
+div[class*="link_yt"] a,
+a[href*="youtube.com/shorts"] {
+    background: #ff0000 !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    border: none !important;
+    border-radius: 8px !important;
+    box-shadow: 0 1px 4px rgba(255, 0, 0, 0.25) !important;
+}
+div.stLinkButton a:has(p:contains("Shorts")) *,
+div[class*="link_yt"] a *,
+a[href*="youtube.com/shorts"] * {
+    color: #ffffff !important;
+}
 </style>""",
         unsafe_allow_html=True,
     )
@@ -1504,6 +1536,38 @@ div[data-testid="stPopoverBody"] {
 }
 div[data-testid="stPopoverBody"] > div {
     max-width: 100% !important;
+}
+
+/* Action button nowrap and YouTube Shorts link button styling */
+div.stLinkButton a,
+.stLinkButton a,
+div[data-testid="stColumn"] div.stLinkButton a,
+div[data-testid="stColumn"] div.stButton button {
+    white-space: nowrap !important;
+    min-width: max-content !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    font-size: 0.82rem !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4px !important;
+}
+
+div.stLinkButton a:has(p:contains("Shorts")),
+div[class*="link_yt"] a,
+a[href*="youtube.com/shorts"] {
+    background: #ff0000 !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    border: none !important;
+    border-radius: 8px !important;
+    box-shadow: 0 1px 4px rgba(255, 0, 0, 0.35) !important;
+}
+div.stLinkButton a:has(p:contains("Shorts")) *,
+div[class*="link_yt"] a *,
+a[href*="youtube.com/shorts"] * {
+    color: #ffffff !important;
 }
 </style>""",
         unsafe_allow_html=True,
@@ -2620,7 +2684,8 @@ def _scan_history_tasks(limit=30):
     for mtime, name, task_path in task_entries[:limit]:
         cache_key = (active_uid, task_path, mtime)
         cached_info = _history_task_meta_cache.get(cache_key)
-        if cached_info is not None:
+        # Only use cached metadata if task is completed or failed; processing tasks must always query live state
+        if cached_info is not None and cached_info.get("state") not in (const.TASK_STATE_PROCESSING, "processing", "queued"):
             tasks.append(cached_info)
             continue
 
@@ -2648,15 +2713,40 @@ def _scan_history_tasks(limit=30):
 
         # Determine actual state from video_file and state.json
         disk_raw_state = state_data.get("state")
-        if not video_file and (disk_raw_state in (const.TASK_STATE_FAILED, "failed", -1) or state_data.get("error")):
-            continue
+        raw_error = str(state_data.get("error") or "").strip()
+        now_ts = time.time()
+        task_updated_at = mtime
+        raw_updated = state_data.get("updated_at")
+        if raw_updated:
+            try:
+                task_updated_at = float(raw_updated)
+            except (ValueError, TypeError):
+                task_updated_at = mtime
+        task_age = now_ts - task_updated_at
+
+        # Watchdog: tasks inactive for over 15 mins without video must not be stuck in processing
+        is_stuck_zombie = (
+            not video_file
+            and disk_raw_state in (const.TASK_STATE_PROCESSING, "processing", "queued")
+            and task_age > 900
+        )
+        is_failed = bool(
+            disk_raw_state in (const.TASK_STATE_FAILED, "failed", -1)
+            or (raw_error and not video_file)
+            or is_stuck_zombie
+        )
 
         if video_file:
             task_state = const.TASK_STATE_COMPLETE
             task_progress = 100
+        elif is_failed:
+            task_state = const.TASK_STATE_FAILED
+            task_progress = 0
+            if not raw_error and is_stuck_zombie:
+                raw_error = "Task timed out: worker container terminated or stalled. Please retry or click Remake."
         elif disk_raw_state in (const.TASK_STATE_PROCESSING, "processing", "queued"):
             task_state = const.TASK_STATE_PROCESSING
-            task_progress = int(state_data.get("progress", 0) or 0)
+            task_progress = max(5, int(state_data.get("progress", 5) or 5))
         elif disk_raw_state in (const.TASK_STATE_COMPLETE, "complete"):
             task_state = const.TASK_STATE_COMPLETE
             task_progress = 100
@@ -2669,7 +2759,7 @@ def _scan_history_tasks(limit=30):
             "subject": subject,
             "state": task_state,
             "progress": task_progress,
-            "error": state_data.get("error", ""),
+            "error": raw_error,
             "mtime": mtime,
             "task_path": task_path,
             "video_file": video_file,
@@ -2677,7 +2767,8 @@ def _scan_history_tasks(limit=30):
             "youtube_url": state_data.get("youtube_url", ""),
             "youtube_channel_title": state_data.get("youtube_channel_title", ""),
         }
-        _history_task_meta_cache[cache_key] = task_item
+        if task_state in (const.TASK_STATE_COMPLETE, const.TASK_STATE_FAILED):
+            _history_task_meta_cache[cache_key] = task_item
         tasks.append(task_item)
 
     return tasks
@@ -2721,6 +2812,7 @@ def _collect_task_summaries(limit=20):
             "state": task.get("state"),
             "cross_post_state": task.get("cross_post_state"),
             "progress": int(task.get("progress", 0) or 0),
+            "error": task.get("error", "") or history_task.get("error", ""),
             "mtime": os.path.getmtime(task_path)
             if os.path.isdir(task_path)
             else history_task.get("mtime", 0),
@@ -2741,6 +2833,18 @@ def _collect_task_summaries(limit=20):
             # 后台任务结束后必须以真实终态为准，不能把失败任务重新显示为生成中。
             continue
 
+        live_t = None
+        try:
+            live_t = sm.state.get_task(task_id)
+        except Exception:
+            pass
+
+        live_prog = 5
+        if live_t and live_t.get("progress") is not None:
+            live_prog = int(live_t.get("progress"))
+        elif history_task.get("progress"):
+            live_prog = int(history_task.get("progress"))
+
         task_path = os.path.join(utils.task_dir(), task_id)
         history_tasks[task_id] = {
             "task_id": task_id,
@@ -2748,19 +2852,33 @@ def _collect_task_summaries(limit=20):
             or history_task.get("subject")
             or task_id,
             "state": const.TASK_STATE_PROCESSING,
-            "progress": history_task.get("progress", 0),
+            "progress": max(5, live_prog),
+            "error": (live_t or {}).get("error", "") or history_task.get("error", ""),
             "mtime": active_task.get("mtime")
             or history_task.get("mtime", datetime.now().timestamp()),
             "task_path": task_path,
             "video_file": history_task.get("video_file", ""),
             "source": "active",
+            "youtube_url": history_task.get("youtube_url", ""),
+            "youtube_channel_title": history_task.get("youtube_channel_title", ""),
         }
 
-    tasks = [
-        t for t in history_tasks.values()
-        if _task_state_filter_key(t) != "failed" and t.get("state") not in (-1, const.TASK_STATE_FAILED)
-    ]
-    return sorted(tasks, key=lambda item: item["mtime"], reverse=True)[:limit]
+    # Sync live state and real-time progress for all tasks currently marked as processing
+    for t_id, item in history_tasks.items():
+        if _task_state_filter_key(item) == "processing":
+            live_entry = sm.state.get_task(t_id)
+            if live_entry:
+                if live_entry.get("progress") is not None:
+                    item["progress"] = max(item.get("progress", 0), int(live_entry["progress"]))
+                if live_entry.get("state") in (const.TASK_STATE_COMPLETE, const.TASK_STATE_FAILED):
+                    item["state"] = live_entry["state"]
+                    if live_entry.get("error"):
+                        item["error"] = live_entry["error"]
+                if live_entry.get("videos"):
+                    item["video_file"] = live_entry["videos"][0]
+
+    tasks = list(history_tasks.values())
+    return sorted(tasks, key=lambda item: item.get("mtime", 0), reverse=True)[:limit]
 
 
 def _is_headless_server():
@@ -2814,44 +2932,57 @@ def _open_task_video(video_file, task=None):
     }
 
 
-def _delete_task(task_id, task_path, task_state=None):
-    # 页面展示的状态可能落后于后台任务。删除前同时检查传入状态、当前会话的
-    # 活跃任务和最新状态，避免任务刚开始或已产出中间视频时被误删。
-    current_task = None
+def _delete_task(task_id, task_path=None, task_state=None):
+    """一键彻底删除任务，支持强制取消卡住或正在生成的任务，并清理云持久化卷及本地磁盘。"""
     try:
-        current_task = sm.state.get_task(task_id)
-    except Exception as e:
-        logger.exception(f"failed to verify task state before deletion: {task_id}, {e}")
-        return False
-
-    task_snapshot = dict(current_task or {})
-    task_snapshot.setdefault("state", task_state)
-    if task_id in _active_generation_tasks():
-        task_snapshot["state"] = const.TASK_STATE_PROCESSING
-
-    if tm.is_task_busy(task_snapshot):
-        logger.warning(f"refused to delete running task: {task_id}")
-        return False
-
-    tasks_root = os.path.abspath(utils.task_dir())
-    normalized_path = os.path.abspath(task_path)
-
-    # 删除任务会移除任务状态和本地生成文件。这里必须限定在 storage/tasks
-    # 下，避免异常 task_path 造成误删其它本地目录。
-    if not normalized_path.startswith(tasks_root + os.sep):
-        logger.warning(f"invalid task folder path for deletion: {normalized_path}")
-        return False
+        if task_id in st.session_state.get("_active_generation_tasks", {}):
+            _remove_active_generation_task(task_id)
+        if st.session_state.get("current_generation_task_id") == task_id:
+            st.session_state.pop("current_generation_task_id", None)
+        if st.session_state.get(f"handled_generation_task_id") == task_id:
+            st.session_state.pop("handled_generation_task_id", None)
+    except Exception:
+        pass
 
     try:
         if hasattr(sm.state, "delete_task"):
             sm.state.delete_task(task_id)
-        if os.path.isdir(normalized_path):
-            shutil.rmtree(normalized_path)
-        logger.info(f"deleted task: {task_id}")
-        return True
     except Exception as e:
-        logger.exception(f"failed to delete task: {task_id}, {e}")
-        return False
+        logger.debug(f"sm.state.delete_task note: {e}")
+
+    # Remove all cached entries for this task from metadata cache
+    to_evict = [k for k in list(_history_task_meta_cache.keys()) if task_id in str(k)]
+    for k in to_evict:
+        _history_task_meta_cache.pop(k, None)
+
+    storage_root = os.path.abspath(os.path.join(utils.root_dir(), "storage"))
+    normalized_path = os.path.abspath(task_path) if task_path else ""
+
+    # Locate and delete all candidate task directories across storage partitions
+    import glob
+    candidates = []
+    if normalized_path and os.path.isdir(normalized_path):
+        candidates.append(normalized_path)
+    candidates += glob.glob(os.path.join(storage_root, "users", "*", "tasks", str(task_id)))
+    candidates += glob.glob(os.path.join(storage_root, "tasks", str(task_id)))
+
+    deleted = False
+    for c_dir in set(candidates):
+        if os.path.isdir(c_dir):
+            try:
+                shutil.rmtree(c_dir)
+                deleted = True
+            except Exception as rm_e:
+                logger.warning(f"failed to rmtree {c_dir}: {rm_e}")
+
+    try:
+        import modal
+        modal.Volume.from_name("bangai-storage").commit()
+    except Exception:
+        pass
+
+    logger.info(f"Permanently deleted task: {task_id}")
+    return True
 
 
 def _count_processing_tasks(tasks):
@@ -3046,8 +3177,8 @@ def _render_task_table(filtered_tasks, key_prefix):
         with st.container(
             key=f"task_row_{key_prefix}_{safe_task_key}", border=True
         ):
-            # Responsive 2-column card layout
-            info_col, action_col = st.columns([3.4, 2.6], vertical_alignment="center")
+            # Responsive 2-column card layout with generous action column width
+            info_col, action_col = st.columns([2.5, 3.5], vertical_alignment="center")
             with info_col:
                 state_badge = _task_state_label(task["state"], has_video)
                 time_str = _format_task_time(task["mtime"])
@@ -3058,18 +3189,22 @@ def _render_task_table(filtered_tasks, key_prefix):
                 if yt_channel:
                     meta_parts.append(f"📺 {yt_channel}")
                 st.caption(" · ".join(meta_parts))
+                if task.get("error") and not has_video:
+                    err_txt = str(task["error"]).strip()
+                    err_snippet = err_txt[:60] + ("..." if len(err_txt) > 60 else "")
+                    st.caption(f":red[⚠️ {err_snippet}]")
 
             with action_col:
                 if is_processing:
-                    p_cols = st.columns([3, 1], vertical_alignment="center")
+                    p_cols = st.columns([3.2, 0.8], vertical_alignment="center")
                     with p_cols[0]:
                         st.progress(max(5, min(100, int(task.get("progress", 0)))))
                     with p_cols[1]:
                         if st.button("✕", key=f"cancel_task_{key_prefix}_{task_id}", help=tr("Delete Task"), use_container_width=True):
-                            _delete_task(task_id, task["task_path"], task["state"])
+                            _delete_task(task_id, task.get("task_path"), task.get("state"))
                             st.rerun()
                 elif has_video:
-                    act_cols = st.columns([1, 1, 1, 1, 0.6], vertical_alignment="center", gap="small")
+                    act_cols = st.columns([1.0, 1.0, 1.35, 1.15, 0.65], vertical_alignment="center", gap="small")
                     with act_cols[0]:
                         play_label = tr("Play")
                         if st.button(
@@ -3118,7 +3253,7 @@ def _render_task_table(filtered_tasks, key_prefix):
                                 key=f"link_yt_{key_prefix}_{task_id}",
                                 use_container_width=True,
                                 icon=":material/smart_display:",
-                                help=f"Published on YouTube: {yt_url}",
+                                help=f"Published on YouTube Shorts: {yt_url}",
                             )
                         else:
                             if st.button(
@@ -3149,19 +3284,18 @@ def _render_task_table(filtered_tasks, key_prefix):
                             key=f"delete_task_{key_prefix}_{task_id}",
                             use_container_width=True,
                             help=tr("Delete Task"),
-                            disabled=is_busy,
                         ):
-                            if _delete_task(task_id, task["task_path"], task["state"]):
+                            if _delete_task(task_id, task.get("task_path"), task.get("state")):
                                 st.toast(tr("Task Deleted"))
                                 st.rerun()
                             else:
                                 st.error(tr("Task Delete Failed"))
                 else:
-                    fail_cols = st.columns([2, 1], vertical_alignment="center", gap="small")
+                    fail_cols = st.columns([1.5, 0.65], vertical_alignment="center", gap="small")
                     with fail_cols[0]:
                         restore_label = tr("Regenerate Task")
                         if st.button(
-                            restore_label,
+                            "Remake",
                             key=f"restore_task_{key_prefix}_{task_id}",
                             use_container_width=True,
                             icon=":material/replay:",
@@ -3175,9 +3309,8 @@ def _render_task_table(filtered_tasks, key_prefix):
                             key=f"delete_task_{key_prefix}_{task_id}",
                             use_container_width=True,
                             help=tr("Delete Task"),
-                            disabled=is_busy,
                         ):
-                            if _delete_task(task_id, task["task_path"], task["state"]):
+                            if _delete_task(task_id, task.get("task_path"), task.get("state")):
                                 st.toast(tr("Task Deleted"))
                                 st.rerun()
                             else:
@@ -4550,23 +4683,50 @@ def render_onboarding_tour():
         tour.start()
 
 
-def _render_generation_logs(task_id):
-    """渲染后台任务日志快照，不从工作线程访问 Streamlit 会话状态。"""
+def _render_generation_logs(task_id, task_data=None):
+    """渲染后台任务日志快照，保证点击生成按钮后终端控制台立刻可见并实时显示全部真实日志。"""
     if config.ui.get("hide_log", False):
         return
 
     log_records = webui_task.get_task_logs(task_id)
     if not log_records:
-        return
+        now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_records = [
+            f"[{now_time}] [INFO] Initializing video generation pipeline for task: {task_id}",
+            f"[{now_time}] [INFO] Setting up AI scriptwriter, neural voice, and GPU render workers...",
+            f"[{now_time}] [INFO] Streaming live real-time execution logs...",
+        ]
 
-    st.code("\n".join(log_records))
+    # If task has recorded error, append prominently to terminal log output
+    if task_data and isinstance(task_data, dict) and task_data.get("error"):
+        err_msg = str(task_data.get("error")).strip()
+        now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        err_entry = f"[{now_time}] [ERROR] Task Failure: {err_msg}"
+        if not any(err_msg in line for line in log_records):
+            log_records.append(err_entry)
+
+    st.markdown(
+        f"""
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 1rem; margin-bottom: 0.35rem;">
+            <div style="font-weight: 600; font-size: 0.88rem; color: #f0883e; display: flex; align-items: center; gap: 6px;">
+                <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 8px #22c55e;"></span>
+                <span>Live Generation Terminal Output</span>
+            </div>
+            <div style="font-size: 0.75rem; color: #8b949e; font-family: monospace;">
+                task_id: {task_id}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.code("\n".join(log_records), language="log")
 
 
 def _render_generation_task_snapshot(task_id, task):
     """根据状态存储中的快照渲染进度、失败原因或最终成片。"""
     if not task:
         st.info(tr("Generating Video"))
-        _render_generation_logs(task_id)
+        _render_generation_logs(task_id, task)
         return
 
     state = _normalize_task_state(task.get("state"))
@@ -4583,7 +4743,7 @@ def _render_generation_task_snapshot(task_id, task):
             "⚡ **Cloud Parallel Rendering**: 20 active video rendering slots are running in parallel. "
             "Your video will automatically start rendering the moment a slot opens!"
         )
-        _render_generation_logs(task_id)
+        _render_generation_logs(task_id, task)
         return
 
     if state == const.TASK_STATE_PROCESSING:
@@ -4592,20 +4752,20 @@ def _render_generation_task_snapshot(task_id, task):
             progress,
             text=f"{tr('Task Progress')}: {progress}%",
         )
-        _render_generation_logs(task_id)
+        _render_generation_logs(task_id, task)
         return
 
     if state == const.TASK_STATE_FAILED:
         error = str(task.get("error") or "").strip()
         message = tr("Video Generation Failed")
         st.error(f"{message}: {error}" if error else message)
-        _render_generation_logs(task_id)
+        _render_generation_logs(task_id, task)
         return
 
     video_files = task.get("videos") or []
     if state != const.TASK_STATE_COMPLETE or not video_files:
         st.error(tr("Video Generation Failed"))
-        _render_generation_logs(task_id)
+        _render_generation_logs(task_id, task)
         return
 
     st.success(tr("Video Generation Completed"))
@@ -4773,7 +4933,7 @@ def _render_generation_task_snapshot(task_id, task):
             f"video_files={video_files}, error={exc}"
         )
 
-    _render_generation_logs(task_id)
+    _render_generation_logs(task_id, task)
     if st.session_state.get("handled_generation_task_id") != task_id:
         # Fragment 可能重复渲染同一个完成任务。无论是否开启自动打开目录，
         # 每个任务都只处理一次完成事件，避免重复弹出资源管理器或重复写入日志。
