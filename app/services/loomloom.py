@@ -876,7 +876,8 @@ class LoomLoomVideoBackend(LoomLoomScriptBackend):
         if not raw_destination:
             raise ValueError("destination_dir is required")
         normalized_destination = os.path.realpath(raw_destination)
-        os.makedirs(normalized_destination, exist_ok=True)
+        from app.utils import utils
+        utils.safe_makedirs(normalized_destination, exist_ok=True)
 
         rows = sorted(
             self._list_all_result_rows(normalized_run_id),

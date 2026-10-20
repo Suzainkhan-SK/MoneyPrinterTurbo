@@ -300,7 +300,7 @@ def _stream_audio(response: requests.Response, temp_audio_path: str) -> tuple[in
 def _request_bgm(video_path: str, output_path: str, prompt: str) -> str:
     """请求配乐并在完整协议及音频校验通过后原子保存。"""
     output_dir = os.path.dirname(os.path.abspath(output_path))
-    os.makedirs(output_dir, exist_ok=True)
+    utils.safe_makedirs(output_dir, exist_ok=True)
     descriptor, temp_audio_path = tempfile.mkstemp(
         prefix=".sonilo-audio-",
         suffix=Path(output_path).suffix or ".m4a",

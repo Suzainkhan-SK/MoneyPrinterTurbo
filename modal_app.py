@@ -73,6 +73,12 @@ def ui():
 
     try:
         volume.reload()
+        # Pre-create root storage structure so directories always exist on Modal Volume
+        for _sd in ["/root/storage/tasks", "/root/storage/users", "/root/storage/cache_videos", "/root/storage/temp"]:
+            try:
+                subprocess.run(["mkdir", "-p", _sd], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
         # Sanitize persistent cloud storage base template:
         # All BYOK keys (Gemini, Pexels, OpenAI, json2video, etc.) must remain clean/empty so new users start with their own keys.
         storage_cfg = "/root/storage/config.toml"
@@ -150,6 +156,14 @@ def render_task_worker(task_id: str, params_dict: dict, stop_at: str = "video"):
     sys.path.insert(0, "/root")
     os.chdir("/root")
     volume.reload()
+    
+    # Pre-create root storage structure
+    import subprocess
+    for _sd in ["/root/storage/tasks", "/root/storage/users", "/root/storage/cache_videos", "/root/storage/temp"]:
+        try:
+            subprocess.run(["mkdir", "-p", _sd], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
     
     from app.utils import utils
     from app.config import config
@@ -429,7 +443,11 @@ def serve():
             if "default_provider" in body:
                 keys_data["default_provider"] = body["default_provider"]
             storage_path = "/root/storage/system_api_keys.json"
-            os.makedirs("/root/storage", exist_ok=True)
+            if not os.path.exists("/root/storage"):
+                try:
+                    subprocess.run(["mkdir", "-p", "/root/storage"], check=False)
+                except Exception:
+                    pass
             with open(storage_path, "w", encoding="utf-8") as f:
                 json.dump(keys_data, f, indent=2)
             volume.commit()

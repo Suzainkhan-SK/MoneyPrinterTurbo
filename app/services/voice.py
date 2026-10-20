@@ -3775,14 +3775,35 @@ def _get_audio_duration_from_file(audio_file: str) -> float:
     """
     获取音频文件时长（支持 mp3/m4a/wav/aac 等 ffmpeg 可解码的格式）
     """
-    if not os.path.exists(audio_file):
-        logger.error(f"audio file does not exist: {audio_file}")
+    if not audio_file:
         return 0.0
+    abs_audio = os.path.abspath(str(audio_file).strip())
+    if not os.path.exists(abs_audio):
+        logger.error(f"audio file does not exist: {abs_audio}")
+        return 0.0
+
+    # 1. Fast ffprobe check
+    try:
+        import subprocess
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            abs_audio,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=10)
+        if res.returncode == 0 and res.stdout.strip():
+            d = float(res.stdout.strip())
+            if d > 0:
+                return d
+    except Exception:
+        pass
 
     try:
         # Use moviepy (ffmpeg) to read the duration of any supported audio format
-        with AudioFileClip(audio_file) as audio:
-            return audio.duration  # Duration in seconds
+        with AudioFileClip(abs_audio) as audio:
+            return float(audio.duration or 0.0)
     except Exception as e:
         logger.error(f"Failed to get audio duration from file: {str(e)}")
         return 0.0

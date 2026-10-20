@@ -99,48 +99,46 @@ def safe_makedirs(path: str, exist_ok: bool = True):
     if os.path.isdir(abs_path):
         return
     # Never attempt to re-create system mount points
-    if abs_path in ("/", "/root", "/root/storage"):
+    if abs_path in ("/", "/root", "/root/storage", "/root/storage/"):
         return
 
+    # Attempt 1: Standard Python os.makedirs
     try:
-        import modal
-        modal.Volume.from_name("bangai-storage").reload()
-    except Exception:
-        pass
-
-    if os.path.isdir(abs_path):
+        os.makedirs(abs_path, exist_ok=exist_ok)
         return
+    except FileExistsError:
+        return
+    except OSError as e:
+        err_no = getattr(e, "errno", None)
+        if os.path.isdir(abs_path):
+            return
 
-    # Decompose into components and create step-by-step from root downwards.
-    # This prevents Python's os.makedirs from attempting to touch or recreate
-    # the /root/storage mount point which causes Errno 1 (EPERM).
-    parts = Path(abs_path).parts
-    current = Path(parts[0])
-    for part in parts[1:]:
-        current = current / part
-        c_str = str(current)
-        if c_str in ("/", "/root", "/root/storage") or os.path.isdir(c_str):
-            continue
-        try:
-            os.mkdir(c_str)
-        except FileExistsError:
-            pass
-        except OSError as e:
-            err_no = getattr(e, "errno", None)
-            if err_no in (1, 13, 17):
-                try:
-                    import modal
-                    modal.Volume.from_name("bangai-storage").reload()
-                except Exception:
-                    pass
-            if os.path.isdir(c_str):
-                continue
+        # Attempt 2: On Linux FUSE Modal Volume mounts, if os.makedirs hits
+        # Errno 1 (EPERM), Errno 13 (EACCES), or parent inspection issues,
+        # invoke native Linux GNU Coreutils `mkdir -p` which reliably creates
+        # directory trees on FUSE mounts without Python parent stat restrictions.
+        if os.name != "nt":
             try:
-                os.makedirs(c_str, exist_ok=True)
+                import subprocess
+                subprocess.run(
+                    ["mkdir", "-p", abs_path],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if os.path.isdir(abs_path):
+                    return
             except Exception:
                 pass
-            if not os.path.isdir(c_str):
-                logger.warning(f"safe_makedirs note on '{c_str}': {e}")
+
+        if os.path.isdir(abs_path):
+            return
+
+        # Suppress benign EPERM notes on Modal storage roots if subpath was created
+        if err_no == 1 and abs_path.startswith("/root/storage"):
+            if os.path.isdir(abs_path):
+                return
+        logger.warning(f"safe_makedirs note on '{abs_path}': {e}")
 
 
 _thread_local = threading.local()
@@ -206,8 +204,7 @@ def font_dir(sub_dir: str = ""):
     d = resource_dir("fonts")
     if sub_dir:
         d = os.path.join(d, sub_dir)
-    if not os.path.exists(d):
-        os.makedirs(d)
+    safe_makedirs(d, exist_ok=True)
     return d
 
 
@@ -215,8 +212,7 @@ def song_dir(sub_dir: str = ""):
     d = resource_dir("songs")
     if sub_dir:
         d = os.path.join(d, sub_dir)
-    if not os.path.exists(d):
-        os.makedirs(d)
+    safe_makedirs(d, exist_ok=True)
     return d
 
 
@@ -224,8 +220,7 @@ def public_dir(sub_dir: str = ""):
     d = resource_dir("public")
     if sub_dir:
         d = os.path.join(d, sub_dir)
-    if not os.path.exists(d):
-        os.makedirs(d)
+    safe_makedirs(d, exist_ok=True)
     return d
 
 

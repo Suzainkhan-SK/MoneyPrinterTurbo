@@ -1099,17 +1099,39 @@ def _get_downloaded_video_duration(video_path: str) -> float:
 
 
 def _validate_video_file(video_path: str) -> bool:
-    """Validate that the video file exists and can be parsed by MoviePy with positive duration and fps."""
-    if not video_path or not os.path.exists(video_path) or not os.path.isfile(video_path) or os.path.getsize(video_path) == 0:
+    """Validate that the video file exists and can be parsed by FFmpeg/MoviePy with positive duration and fps."""
+    if not video_path:
         return False
+    abs_path = os.path.abspath(str(video_path).strip())
+    if not os.path.exists(abs_path) or not os.path.isfile(abs_path) or os.path.getsize(abs_path) == 0:
+        return False
+
+    # 1. Fast, non-blocking ffprobe check
+    try:
+        import subprocess
+        probe_cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=duration,width,height:format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            abs_path,
+        ]
+        res = subprocess.run(probe_cmd, capture_output=True, text=True, check=False, timeout=10)
+        if res.returncode == 0 and res.stdout.strip():
+            return True
+    except Exception:
+        pass
+
+    # 2. MoviePy VideoFileClip fallback
     clip = None
     try:
-        clip = VideoFileClip(video_path)
+        clip = VideoFileClip(abs_path)
         duration = getattr(clip, "duration", 0) or 0
         fps = getattr(clip, "fps", 0) or 0
         return duration > 0 and fps > 0
     except Exception as e:
-        logger.warning(f"video validation failed for {video_path}: {e}")
+        logger.warning(f"video validation failed for {abs_path}: {e}")
         return False
     finally:
         if clip is not None:
@@ -1121,15 +1143,15 @@ def _validate_video_file(video_path: str) -> bool:
 
 def save_video(video_url: str, save_dir: str = "") -> str:
     if not save_dir:
-        save_dir = utils.storage_dir("cache_videos")
-
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+        save_dir = utils.storage_dir("cache_videos", create=True)
+    else:
+        save_dir = os.path.abspath(str(save_dir).strip())
+        utils.safe_makedirs(save_dir, exist_ok=True)
 
     url_without_query = video_url.split("?")[0]
     url_hash = utils.md5(url_without_query)
     video_id = f"vid-{url_hash}"
-    video_path = f"{save_dir}/{video_id}.mp4"
+    video_path = os.path.abspath(os.path.join(save_dir, f"{video_id}.mp4"))
 
     # if video already exists, verify that it is fully readable and not corrupted
     if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
@@ -1167,8 +1189,14 @@ def save_video(video_url: str, save_dir: str = "") -> str:
             logger.error(f"empty response content for video: {video_url}")
             return ""
 
+        utils.safe_makedirs(os.path.dirname(video_path), exist_ok=True)
         with open(video_path, "wb") as f:
             f.write(content)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
     except Exception as download_error:
         logger.error(f"failed to download video from {video_url}: {download_error}")
         try:
@@ -1179,6 +1207,11 @@ def save_video(video_url: str, save_dir: str = "") -> str:
         return ""
 
     if _validate_video_file(video_path):
+        try:
+            import modal
+            modal.Volume.from_name("bangai-storage").commit()
+        except Exception:
+            pass
         return video_path
 
     logger.warning(f"downloaded video file is invalid: {video_path}")
@@ -1503,8 +1536,9 @@ def _save_openai_image_file(
     """
     if not save_dir:
         save_dir = utils.storage_dir("cache_images", create=True)
-    elif not os.path.isdir(save_dir):
-        os.makedirs(save_dir, exist_ok=True)
+    else:
+        save_dir = os.path.abspath(str(save_dir).strip())
+        utils.safe_makedirs(save_dir, exist_ok=True)
 
     image_path = os.path.join(save_dir, f"openai-image-{uuid.uuid4().hex[:12]}.png")
 

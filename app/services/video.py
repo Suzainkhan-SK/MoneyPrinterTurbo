@@ -806,23 +806,28 @@ def combine_videos(
         if not video_path:
             continue
 
+        abs_vpath = os.path.abspath(str(video_path).strip())
+        if not os.path.exists(abs_vpath) or not os.path.isfile(abs_vpath) or os.path.getsize(abs_vpath) == 0:
+            logger.warning(f"skipping missing or empty video material: {abs_vpath}")
+            continue
+
         clip = None
         try:
-            clip = _open_video_clip_quietly(video_path)
+            clip = _open_video_clip_quietly(abs_vpath)
             clip_duration = getattr(clip, "duration", 0) or 0
             clip_w, clip_h = getattr(clip, "size", (0, 0))
             if not clip_duration or clip_duration <= 0 or not clip_w or not clip_h:
                 logger.warning(
-                    f"skipping video material with invalid duration or size: {video_path}"
+                    f"skipping video material with invalid duration or size: {abs_vpath}"
                 )
                 continue
         except Exception as probe_error:
             logger.warning(
-                f"skipping unreadable or corrupt video material {video_path}: {probe_error}"
+                f"skipping unreadable or corrupt video material {abs_vpath}: {probe_error}"
             )
             try:
-                if os.path.exists(video_path):
-                    os.remove(video_path)
+                if os.path.exists(abs_vpath) and os.path.getsize(abs_vpath) == 0:
+                    os.remove(abs_vpath)
             except Exception:
                 pass
             continue
@@ -841,12 +846,12 @@ def combine_videos(
             if end_time > start_time:
                 subclipped_items.append(
                     SubClippedVideoClip(
-                        file_path=video_path,
+                        file_path=abs_vpath,
                         start_time=start_time,
                         end_time=end_time,
                         width=clip_w,
                         height=clip_h,
-                        source_file_path=video_path,
+                        source_file_path=abs_vpath,
                     )
                 )
 

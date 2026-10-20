@@ -2274,7 +2274,7 @@ def _build_uploaded_file_path(uploaded_file, target_dir, allowed_extensions, pre
         raise ValueError("unsupported uploaded file type")
 
     normalized_target_dir = os.path.realpath(target_dir)
-    os.makedirs(normalized_target_dir, exist_ok=True)
+    utils.safe_makedirs(normalized_target_dir, exist_ok=True)
     # 不复用浏览器传入的文件名，避免路径分隔符、控制字符或同名覆盖。UUID 只用于
     # 服务端落盘，不改变用户在上传控件中看到的原始名称。
     file_path = os.path.realpath(
@@ -4581,14 +4581,14 @@ def increment_onboarding_view_count(user_id: str) -> int:
     try:
         # Save to user-specific directory
         user_dir = os.path.join(root_dir, "storage", "users", user_id)
-        os.makedirs(user_dir, exist_ok=True)
+        utils.safe_makedirs(user_dir, exist_ok=True)
         user_file = os.path.join(user_dir, "tour_views.json")
         with open(user_file, "w", encoding="utf-8") as f:
             json.dump({"views": new_count, "last_viewed": time.time()}, f)
 
         # Save to centralized registry
         storage_dir = os.path.join(root_dir, "storage")
-        os.makedirs(storage_dir, exist_ok=True)
+        utils.safe_makedirs(storage_dir, exist_ok=True)
         central_path = os.path.join(storage_dir, "onboarding_tour_views.json")
         data = {}
         if os.path.exists(central_path):

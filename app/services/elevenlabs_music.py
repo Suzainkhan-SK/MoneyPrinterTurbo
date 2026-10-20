@@ -301,7 +301,7 @@ def _stream_audio(response: requests.Response, temp_audio_path: str) -> int:
 def _request_bgm(video_path: str, output_path: str, prompt: str) -> str:
     """请求 ElevenLabs 配乐，完整下载并通过 FFmpeg 校验后再原子发布。"""
     output_dir = os.path.dirname(os.path.abspath(output_path))
-    os.makedirs(output_dir, exist_ok=True)
+    utils.safe_makedirs(output_dir, exist_ok=True)
     descriptor, temp_audio_path = tempfile.mkstemp(
         prefix=".elevenlabs-music-",
         suffix=Path(output_path).suffix or ".mp3",
