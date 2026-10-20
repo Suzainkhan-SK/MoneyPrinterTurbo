@@ -6258,9 +6258,14 @@ def _render_automation_dialog():
     if "automation_data" not in st.session_state or st.session_state.get("automation_data_stale", True):
         with st.spinner("Loading autonomous configuration..."):
             res = _fetch_stock_studio_automation(user_email, current_uid, token)
+            live_channels = []
+            try:
+                live_channels = youtube_oauth.youtube_oauth_service.fetch_connected_channels(user_id=current_uid)
+            except Exception as e:
+                logger.warning(f"[Automate Dialog] Error querying connected channels: {e}")
             if res.get("success"):
                 st.session_state["automation_data"] = res.get("automation") or {}
-                st.session_state["automation_channels"] = res.get("channels") or []
+                st.session_state["automation_channels"] = live_channels or res.get("channels") or []
                 st.session_state["automation_data_stale"] = False
             else:
                 st.session_state["automation_data"] = {
@@ -6270,7 +6275,7 @@ def _render_automation_dialog():
                     "autoUploadToYouTube": True,
                     "youtubePrivacy": "public"
                 }
-                st.session_state["automation_channels"] = []
+                st.session_state["automation_channels"] = live_channels or []
 
     auto = st.session_state.get("automation_data", {})
     channels = st.session_state.get("automation_channels", [])
@@ -6462,21 +6467,56 @@ def _render_automation_dialog():
 
     selected_channel_id = auto.get("selectedChannelId", "")
     if auto_upload_enabled:
+        channels = st.session_state.get("automation_channels")
+        if not channels:
+            try:
+                channels = youtube_oauth.youtube_oauth_service.fetch_connected_channels(user_id=current_uid)
+                if channels:
+                    st.session_state["automation_channels"] = channels
+            except Exception:
+                channels = []
+
         if channels and len(channels) > 0:
-            channel_labels = [f"{c.get('channelTitle', 'Channel')} ({c.get('channelId', '')})" for c in channels]
-            ch_idx = 0
-            for idx, c in enumerate(channels):
-                if c.get("channelId") == selected_channel_id:
-                    ch_idx = idx
-            chosen_ch_str = st.selectbox(
+            channel_ids = [c["channelId"] for c in channels if c.get("channelId")]
+            if not selected_channel_id or selected_channel_id not in channel_ids:
+                default_ch = next((c for c in channels if c.get("isDefault")), channels[0])
+                selected_channel_id = default_ch.get("channelId", "")
+
+            def _format_auto_ch(cid):
+                for c in channels:
+                    if c.get("channelId") == cid:
+                        title = c.get("channelTitle") or c.get("title") or "YouTube Channel"
+                        subs = c.get("subscriberCount", "0")
+                        d_tag = " ★ [Default]" if c.get("isDefault") else ""
+                        e_tag = " ⚠️ (Expired)" if c.get("needsReconnect") else " 🟢"
+                        return f"{title} ({subs} subs){d_tag}{e_tag}"
+                return cid
+
+            sel_cid = st.selectbox(
                 "Upload Channel",
-                options=channel_labels,
-                index=ch_idx,
-                key="auto_yt_channel_select"
+                options=channel_ids,
+                index=channel_ids.index(selected_channel_id) if selected_channel_id in channel_ids else 0,
+                format_func=_format_auto_ch,
+                key="auto_yt_channel_select",
+                help="Select which connected YouTube channel autonomous videos will be uploaded to."
             )
-            selected_channel_id = channels[channel_labels.index(chosen_ch_str)].get("channelId", "")
+            selected_channel_id = sel_cid
+
+            cur_ch = next((c for c in channels if c.get("channelId") == sel_cid), None)
+            if cur_ch:
+                if cur_ch.get("needsReconnect"):
+                    st.warning(f"⚠️ Channel connection expired: {cur_ch.get('reconnectReason') or 'Please reconnect your channel in BangAI Profile.'}")
+                else:
+                    st.success(f"Connected: **{cur_ch.get('channelTitle') or cur_ch.get('title') or 'YouTube Channel'}** (Subscribers: {cur_ch.get('subscriberCount', '0')})")
         else:
             st.info("ℹ️ Connect your YouTube channel in your [BangAI Profile](https://bangai.netlify.app/#/profile) to enable direct cloud uploads.")
+
+        if st.button("🔄 Refresh Channels", key="auto_yt_refresh_channels_btn", use_container_width=True):
+            with st.spinner("Refreshing connected channels..."):
+                refreshed = youtube_oauth.youtube_oauth_service.fetch_connected_channels(force_refresh=True, user_id=current_uid)
+                st.session_state["automation_channels"] = refreshed
+                st.session_state["automation_data_stale"] = True
+            st.rerun()
 
     st.divider()
 

@@ -122,6 +122,12 @@ def _run_generation(
         pass
 
     try:
+        user_storage_path = os.path.abspath(os.path.join(utils.root_dir(), "storage", "users", task_user_id))
+        utils.safe_makedirs(user_storage_path, exist_ok=True)
+    except Exception as udir_err:
+        logger.warning(f"user_storage_path initialization note: {udir_err}")
+
+    try:
         config.switch_user_config(task_user_id)
     except Exception as sw_err:
         logger.warning(f"switch_user_config non-fatal note: {sw_err}")
@@ -151,7 +157,10 @@ def _run_generation(
                 filter=lambda record: record["thread"].id == worker_thread_id,
             )
 
-        config.try_save_config()
+        try:
+            config.try_save_config()
+        except Exception as sc_err:
+            logger.warning(f"try_save_config non-fatal note in generation worker: {sc_err}")
         return tm.start(
             task_id=task_id,
             params=params,

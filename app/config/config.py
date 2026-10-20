@@ -13,7 +13,7 @@ from loguru import logger
 from app import __version__
 from app.utils import utils
 
-root_dir = "/root" if (os.path.isdir("/root/storage") or os.environ.get("MODAL_IMAGE_ID") or os.environ.get("MODAL_SERVE") or (os.path.exists("/root") and os.path.exists("/root/app"))) else os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+root_dir = "/root" if (os.path.isdir("/root/storage") or os.environ.get("MODAL_IMAGE_ID") or os.environ.get("MODAL_SERVE") or (os.path.exists("/root") and os.path.exists("/root/app"))) else os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 config_file = f"{root_dir}/config.toml"
 
 # When deployed on cloud containers (e.g. Modal with /root/storage mounted),
@@ -469,7 +469,10 @@ def try_save_config():
         return False
 
     try:
-        return _flush_pending_config_locked(suppress_save_errors=False)
+        return _flush_pending_config_locked(suppress_save_errors=True)
+    except Exception as e:
+        logger.warning(f"try_save_config non-fatal: {e}")
+        return False
     finally:
         _config_save_lock.release()
 
@@ -748,12 +751,12 @@ def switch_user_config(user_id: str):
     _thread_local.active_user_id = clean_uid
     _current_active_user_id = clean_uid
 
-    user_storage = os.path.join(root_dir, "storage", "users", clean_uid)
+    user_storage = os.path.abspath(os.path.join(root_dir, "storage", "users", clean_uid))
     try:
         utils.safe_makedirs(user_storage, exist_ok=True)
     except Exception as e:
         logger.warning(f"safe_makedirs for user_storage note: {e}")
-    user_config = os.path.join(user_storage, "config.toml")
+    user_config = os.path.abspath(os.path.join(user_storage, "config.toml"))
 
     with _user_registry_lock:
         if clean_uid in _user_registry:
@@ -883,33 +886,36 @@ def save_config(user_id: str | None = None):
 
         temp_path = ""
         try:
-            target_dir = os.path.dirname(target_file)
+            target_dir = os.path.abspath(os.path.dirname(target_file))
             try:
                 utils.safe_makedirs(target_dir, exist_ok=True)
             except Exception as e:
                 logger.warning(f"safe_makedirs for target_dir note: {e}")
-            fd, temp_path = tempfile.mkstemp(
-                prefix=".config-",
-                suffix=".toml.tmp",
-                dir=os.path.dirname(target_file),
-            )
-            with os.fdopen(fd, mode="w", encoding="utf-8") as f:
-                f.write(serialized_config)
-                f.flush()
-                os.fsync(f.fileno())
+
+            write_succeeded = False
             try:
-                os.replace(temp_path, target_file)
-            except OSError as exc:
-                if exc.errno != errno.EBUSY:
-                    raise
-                logger.warning(
-                    "atomic config replacement is unavailable for the mounted "
-                    f"file, fallback to in-place write: {target_file}"
+                fd, temp_path = tempfile.mkstemp(
+                    prefix=".config-",
+                    suffix=".toml.tmp",
+                    dir=target_dir if os.path.isdir(target_dir) else None,
                 )
+                with os.fdopen(fd, mode="w", encoding="utf-8") as f:
+                    f.write(serialized_config)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_path, target_file)
+                write_succeeded = True
+            except Exception as tmp_err:
+                logger.warning(
+                    f"atomic config replacement via tempfile failed ({tmp_err}), fallback to direct write: {target_file}"
+                )
+
+            if not write_succeeded:
                 with open(target_file, mode="w", encoding="utf-8") as f:
                     f.write(serialized_config)
                     f.flush()
                     os.fsync(f.fileno())
+
             sync_cloud_volume()
         finally:
             if temp_path and os.path.exists(temp_path):

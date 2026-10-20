@@ -89,43 +89,58 @@ def normalize_clip_speed(value, default: float = 1.0) -> float:
 def root_dir():
     if os.path.isdir("/root/storage") or os.environ.get("MODAL_IMAGE_ID") or os.environ.get("MODAL_SERVE") or (os.path.exists("/root") and os.path.exists("/root/app")):
         return "/root"
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+    return os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 
 
 def safe_makedirs(path: str, exist_ok: bool = True):
     if not path:
         return
     abs_path = os.path.abspath(str(path).strip())
-    if os.path.exists(abs_path):
+    if os.path.isdir(abs_path):
         return
     # Never attempt to re-create system mount points
     if abs_path in ("/", "/root", "/root/storage"):
         return
+
     try:
-        os.makedirs(abs_path, exist_ok=exist_ok)
-    except OSError as e:
-        err_no = getattr(e, "errno", None)
-        if err_no in (1, 13, 17):  # EPERM, EACCES, EEXIST
+        import modal
+        modal.Volume.from_name("bangai-storage").reload()
+    except Exception:
+        pass
+
+    if os.path.isdir(abs_path):
+        return
+
+    # Decompose into components and create step-by-step from root downwards.
+    # This prevents Python's os.makedirs from attempting to touch or recreate
+    # the /root/storage mount point which causes Errno 1 (EPERM).
+    parts = Path(abs_path).parts
+    current = Path(parts[0])
+    for part in parts[1:]:
+        current = current / part
+        c_str = str(current)
+        if c_str in ("/", "/root", "/root/storage") or os.path.isdir(c_str):
+            continue
+        try:
+            os.mkdir(c_str)
+        except FileExistsError:
+            pass
+        except OSError as e:
+            err_no = getattr(e, "errno", None)
+            if err_no in (1, 13, 17):
+                try:
+                    import modal
+                    modal.Volume.from_name("bangai-storage").reload()
+                except Exception:
+                    pass
+            if os.path.isdir(c_str):
+                continue
             try:
-                import modal
-                modal.Volume.from_name("bangai-storage").reload()
+                os.makedirs(c_str, exist_ok=True)
             except Exception:
                 pass
-            if os.path.exists(abs_path):
-                return
-            try:
-                os.makedirs(abs_path, exist_ok=True)
-            except Exception:
-                pass
-            if os.path.exists(abs_path):
-                return
-        # If directory exists despite exception, suppress safely
-        if os.path.exists(abs_path):
-            return
-        # If running inside Modal container and error is EPERM on a storage path, suppress if parent exists
-        if err_no == 1 and "/storage" in abs_path:
-            return
-        raise
+            if not os.path.isdir(c_str):
+                logger.warning(f"safe_makedirs note on '{c_str}': {e}")
 
 
 _thread_local = threading.local()
