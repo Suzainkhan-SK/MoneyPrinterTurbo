@@ -87,9 +87,33 @@ def normalize_clip_speed(value, default: float = 1.0) -> float:
 
 
 def root_dir():
-    if os.path.isdir("/root/storage") or os.environ.get("MODAL_IMAGE_ID") or os.environ.get("MODAL_SERVE"):
+    if os.path.isdir("/root/storage") or os.environ.get("MODAL_IMAGE_ID") or os.environ.get("MODAL_SERVE") or (os.path.exists("/root") and os.path.exists("/root/app")):
         return "/root"
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+
+
+def safe_makedirs(path: str, exist_ok: bool = True):
+    if not path:
+        return
+    if os.path.exists(path):
+        return
+    try:
+        os.makedirs(path, exist_ok=exist_ok)
+    except OSError as e:
+        if getattr(e, "errno", None) in (1, 17):
+            try:
+                import modal
+                modal.Volume.from_name("bangai-storage").reload()
+            except Exception:
+                pass
+            if os.path.exists(path):
+                return
+            try:
+                os.makedirs(path, exist_ok=True)
+            except Exception:
+                pass
+        else:
+            raise
 
 
 _thread_local = threading.local()
@@ -127,19 +151,8 @@ def storage_dir(sub_dir: str = "", create: bool = False):
         d = os.path.join(root_dir(), "storage")
     if sub_dir:
         d = os.path.join(d, sub_dir)
-    if create and not os.path.exists(d):
-        try:
-            os.makedirs(d, exist_ok=True)
-        except OSError as e:
-            if getattr(e, "errno", None) == 1:
-                try:
-                    import modal
-                    modal.Volume.from_name("bangai-storage").reload()
-                    os.makedirs(d, exist_ok=True)
-                except Exception:
-                    pass
-            else:
-                raise
+    if create:
+        safe_makedirs(d, exist_ok=True)
 
     return d
 
@@ -155,19 +168,8 @@ def task_dir(sub_dir: str = "", create: bool = True, **kwargs):
     d = os.path.join(storage_dir(), "tasks")
     if sub_dir:
         d = os.path.join(d, sub_dir)
-    if not os.path.exists(d):
-        try:
-            os.makedirs(d, exist_ok=True)
-        except OSError as e:
-            if getattr(e, "errno", None) == 1:
-                try:
-                    import modal
-                    modal.Volume.from_name("bangai-storage").reload()
-                    os.makedirs(d, exist_ok=True)
-                except Exception:
-                    pass
-            else:
-                raise
+    if create:
+        safe_makedirs(d, exist_ok=True)
     return d
 
 

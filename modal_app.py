@@ -515,13 +515,8 @@ def serve():
                         task_updated = mtime
                 task_age = now_ts - task_updated
 
-                # Purge failed/timed-out tasks from volume storage - keep only successful tasks
-                if not has_video and (raw_state in (-1, "failed") or task_age > 1200):
-                    try:
-                        shutil.rmtree(t_dir, ignore_errors=True)
-                    except Exception:
-                        pass
-                    continue
+                # Watchdog: mark tasks inactive for over 20 mins without video as failed
+                is_stale_or_failed = (raw_state in (-1, "failed")) or (not has_video and task_age > 1200)
 
                 if has_video:
                     status_str = "completed"
@@ -529,6 +524,9 @@ def serve():
                 elif raw_state in (1, "complete"):
                     status_str = "completed"
                     progress = 100
+                elif is_stale_or_failed:
+                    status_str = "failed"
+                    progress = 0
                 else:
                     status_str = "rendering"
                     progress = int(state_data.get("progress", 10) or 10)

@@ -13,7 +13,7 @@ from loguru import logger
 from app import __version__
 from app.utils import utils
 
-root_dir = "/root" if (os.path.isdir("/root/storage") or os.environ.get("MODAL_IMAGE_ID") or os.environ.get("MODAL_SERVE")) else os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+root_dir = "/root" if (os.path.isdir("/root/storage") or os.environ.get("MODAL_IMAGE_ID") or os.environ.get("MODAL_SERVE") or (os.path.exists("/root") and os.path.exists("/root/app"))) else os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 config_file = f"{root_dir}/config.toml"
 
 # When deployed on cloud containers (e.g. Modal with /root/storage mounted),
@@ -750,17 +750,9 @@ def switch_user_config(user_id: str):
 
     user_storage = os.path.join(root_dir, "storage", "users", clean_uid)
     try:
-        os.makedirs(user_storage, exist_ok=True)
-    except OSError as e:
-        if getattr(e, "errno", None) == 1:
-            try:
-                import modal
-                modal.Volume.from_name("bangai-storage").reload()
-                os.makedirs(user_storage, exist_ok=True)
-            except Exception:
-                pass
-        else:
-            raise
+        utils.safe_makedirs(user_storage, exist_ok=True)
+    except Exception as e:
+        logger.warning(f"safe_makedirs for user_storage note: {e}")
     user_config = os.path.join(user_storage, "config.toml")
 
     with _user_registry_lock:
@@ -893,17 +885,9 @@ def save_config(user_id: str | None = None):
         try:
             target_dir = os.path.dirname(target_file)
             try:
-                os.makedirs(target_dir, exist_ok=True)
-            except OSError as e:
-                if getattr(e, "errno", None) == 1:
-                    try:
-                        import modal
-                        modal.Volume.from_name("bangai-storage").reload()
-                        os.makedirs(target_dir, exist_ok=True)
-                    except Exception:
-                        pass
-                else:
-                    raise
+                utils.safe_makedirs(target_dir, exist_ok=True)
+            except Exception as e:
+                logger.warning(f"safe_makedirs for target_dir note: {e}")
             fd, temp_path = tempfile.mkstemp(
                 prefix=".config-",
                 suffix=".toml.tmp",
