@@ -16,7 +16,7 @@ import json
 import base64
 import glob
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from loguru import logger
 from app.config import config
@@ -608,7 +608,7 @@ class YouTubeOAuthService:
                     data["youtube_channel_title"] = channel_title
                     data["youtube_channel_id"] = channel_id
                     data["youtube_privacy"] = privacy_status
-                    data["youtube_uploaded_at"] = datetime.utcnow().isoformat() + "Z"
+                    data["youtube_uploaded_at"] = datetime.now(timezone.utc).isoformat()
                     data["youtube_status"] = "uploaded"
 
                     with open(state_file, "w", encoding="utf-8") as f:

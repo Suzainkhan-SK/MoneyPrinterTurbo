@@ -2874,8 +2874,9 @@ def _collect_task_summaries(limit=20):
                     item["state"] = live_entry["state"]
                     if live_entry.get("error"):
                         item["error"] = live_entry["error"]
-                if live_entry.get("videos"):
-                    item["video_file"] = live_entry["videos"][0]
+                videos_list = live_entry.get("videos")
+                if isinstance(videos_list, (list, tuple)) and len(videos_list) > 0:
+                    item["video_file"] = str(videos_list[0])
 
     tasks = list(history_tasks.values())
     return sorted(tasks, key=lambda item: item.get("mtime", 0), reverse=True)[:limit]
@@ -3285,11 +3286,9 @@ def _render_task_table(filtered_tasks, key_prefix):
                             use_container_width=True,
                             help=tr("Delete Task"),
                         ):
-                            if _delete_task(task_id, task.get("task_path"), task.get("state")):
-                                st.toast(tr("Task Deleted"))
-                                st.rerun()
-                            else:
-                                st.error(tr("Task Delete Failed"))
+                            _delete_task(task_id, task.get("task_path"), task.get("state"))
+                            st.toast(tr("Task Deleted"))
+                            st.rerun()
                 else:
                     fail_cols = st.columns([1.5, 0.65], vertical_alignment="center", gap="small")
                     with fail_cols[0]:
@@ -3310,11 +3309,9 @@ def _render_task_table(filtered_tasks, key_prefix):
                             use_container_width=True,
                             help=tr("Delete Task"),
                         ):
-                            if _delete_task(task_id, task.get("task_path"), task.get("state")):
-                                st.toast(tr("Task Deleted"))
-                                st.rerun()
-                            else:
-                                st.error(tr("Task Delete Failed"))
+                            _delete_task(task_id, task.get("task_path"), task.get("state"))
+                            st.toast(tr("Task Deleted"))
+                            st.rerun()
 
 
 def _format_quick_voice_label(v: str) -> str:
@@ -3597,7 +3594,8 @@ def _render_task_video_preview():
                         task_meta = json.load(f)
                 except Exception:
                     pass
-        yt_url = task_meta.get("youtube_url")
+        raw_yt_url = task_meta.get("youtube_url")
+        yt_url = str(raw_yt_url).strip() if raw_yt_url else ""
         if yt_url:
             st.link_button(
                 "🎬 View on YouTube",
@@ -4898,15 +4896,16 @@ def _render_generation_task_snapshot(task_id, task):
                                 except Exception:
                                     pass
 
-                        if yt_url:
+                        yt_url_str = str(yt_url).strip() if yt_url else ""
+                        if yt_url_str:
                             if hasattr(st, "link_button"):
                                 st.link_button(
                                     "🎬 View on YouTube",
-                                    yt_url,
+                                    yt_url_str,
                                     key=f"snapshot_view_yt_btn_{task_id}_{i}",
                                     use_container_width=True,
                                     icon=":material/smart_display:",
-                                    help=f"Published on YouTube: {yt_url}",
+                                    help=f"Published on YouTube: {yt_url_str}",
                                 )
                         else:
                             if hasattr(st, "button") and st.button(
@@ -6375,7 +6374,7 @@ def _render_automation_dialog():
                 }
                 run_res = _save_stock_studio_automation(run_payload, token)
                 if run_res.get("success"):
-                    task_id = run_res.get("taskId")
+                    task_id = str(run_res.get("taskId") or "")
                     topic = run_res.get("topic") or "Autonomous Video"
                     st.session_state["current_generation_task_id"] = task_id
                     _add_active_generation_task(task_id, subject=topic)
@@ -6885,7 +6884,7 @@ def _render_settings_dialog():
                     options=[False, True],
                     # 非法配置保持未选择，不在打开设置时擅自改成非儿童声明。
                     index=int(saved_audience) if isinstance(saved_audience, bool) else None,
-                    format_func=audience_labels.get,
+                    format_func=lambda v: str(audience_labels.get(v, "")),
                     help=tr("YouTube Audience Help"),
                     key="upload_post_youtube_made_for_kids_selectbox",
                 )
@@ -6896,7 +6895,7 @@ def _render_settings_dialog():
         with left_config_panel:
             hide_log = st.checkbox(
                 tr("Hide Log"),
-                value=config.ui.get("hide_log", False),
+                value=bool(config.ui.get("hide_log", False)),
                 key="hide_log_checkbox",
             )
             _set_runtime_config("ui", "hide_log", hide_log)
@@ -7164,6 +7163,9 @@ def _render_settings_dialog():
                 type="secondary",
                 icon=":material/network_check:",
             ):
+                connection_ok = False
+                connection_error = ""
+                connection_elapsed = 0.0
                 with config.try_runtime_config_lock() as lock_acquired:
                     if not lock_acquired:
                         llm_form_panel.warning(tr("Runtime Configuration Busy"))
@@ -8083,12 +8085,13 @@ def _render_loomloom_video_settings(params):
     )
     _set_runtime_config("ui", "loomloom_video_scene_count", int(scene_count))
     if coverage_plan is not None:
-        coverage_seconds = int(scene_count) * coverage_plan["clip_duration"]
+        clip_dur = float(coverage_plan["clip_duration"])
+        coverage_seconds = float(int(scene_count) * clip_dur)
         shortfall_min = max(
-            coverage_plan["duration_min"] - coverage_seconds, 0.0
+            float(coverage_plan["duration_min"]) - coverage_seconds, 0.0
         )
         shortfall_max = max(
-            coverage_plan["duration_max"] - coverage_seconds, 0.0
+            float(coverage_plan["duration_max"]) - coverage_seconds, 0.0
         )
         duration_basis = tr(coverage_plan["basis_key"]).format(
             duration=_format_numeric_range(
@@ -9690,7 +9693,7 @@ def _synthesize_voice_preview(
         with config.try_runtime_config_lock() as lock_acquired:
             if not lock_acquired:
                 return {"busy": True}
-            tts_kwargs = {
+            tts_kwargs: dict[str, Any] = {
                 "text": content,
                 "voice_name": voice_name,
                 "voice_rate": voice_rate,
@@ -11010,9 +11013,12 @@ def _render_audio_settings(panel, params):
                         ):
                             try:
                                 with st.spinner(tr("Transcribing VoxCPM Prompt Audio")):
-                                    recognized_text = subtitle.transcribe_audio_bytes(
-                                        effective_prompt_audio
-                                    )
+                                    if effective_prompt_audio is not None:
+                                        recognized_text = subtitle.transcribe_audio_bytes(
+                                            effective_prompt_audio
+                                        )
+                                    else:
+                                        recognized_text = ""
                             except Exception:
                                 logger.exception(
                                     "failed to transcribe VoxCPM prompt audio"
@@ -11865,7 +11871,7 @@ def _render_generation_controls(
                 and st.session_state.get("loomloom_video_input_signature")
                 == current_signature
             )
-            if not quote_is_current:
+            if not quote_is_current or current_batch is None or quote_result is None:
                 _remove_active_generation_task(task_id)
                 st.error(tr("AI Video Quote Required"))
                 st.stop()
