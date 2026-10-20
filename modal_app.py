@@ -392,141 +392,152 @@ def serve():
             if task_id.startswith(".") or task_id.startswith("_"):
                 continue
 
-            # Load params.json
-            params_file = os.path.join(t_dir, "params.json")
-            params = {}
-            if os.path.exists(params_file):
-                try:
-                    with open(params_file, "r", encoding="utf-8") as pf:
-                        params = json.load(pf)
-                except Exception:
-                    pass
+            try:
+                mtime = os.path.getmtime(t_dir) if os.path.exists(t_dir) else time.time()
+                now_ts = time.time()
 
-            # Load script.json fallback
-            script_file = os.path.join(t_dir, "script.json")
-            script_data = {}
-            if os.path.exists(script_file):
-                try:
-                    with open(script_file, "r", encoding="utf-8") as scf:
-                        script_data = json.load(scf)
-                except Exception:
-                    pass
-            if not params and isinstance(script_data, dict) and "params" in script_data:
-                params = script_data.get("params", {})
+                # Load params.json
+                params_file = os.path.join(t_dir, "params.json")
+                params = {}
+                if os.path.exists(params_file):
+                    try:
+                        with open(params_file, "r", encoding="utf-8") as pf:
+                            params = json.load(pf)
+                    except Exception:
+                        pass
 
-            # Load state.json
-            state_file = os.path.join(t_dir, "state.json")
-            state_data = {}
-            if os.path.exists(state_file):
-                try:
-                    with open(state_file, "r", encoding="utf-8") as sf:
-                        state_data = json.load(sf)
-                except Exception:
-                    pass
+                # Load script.json fallback
+                script_file = os.path.join(t_dir, "script.json")
+                script_data = {}
+                if os.path.exists(script_file):
+                    try:
+                        with open(script_file, "r", encoding="utf-8") as scf:
+                            script_data = json.load(scf)
+                    except Exception:
+                        pass
+                if not params and isinstance(script_data, dict) and "params" in script_data:
+                    params = script_data.get("params", {})
 
-            # Check for final video
-            final_mp4 = os.path.join(t_dir, "final-1.mp4")
-            has_video = os.path.exists(final_mp4) and os.path.getsize(final_mp4) > 1024
-            video_url = f"{base_url}/api/bangai/download/{task_id}/final-1.mp4" if has_video else None
+                # Load state.json
+                state_file = os.path.join(t_dir, "state.json")
+                state_data = {}
+                if os.path.exists(state_file):
+                    try:
+                        with open(state_file, "r", encoding="utf-8") as sf:
+                            state_data = json.load(sf)
+                    except Exception:
+                        pass
 
-            # Resolve user_id
-            user_id = params.get("user_id") or state_data.get("user_id") or ""
-            if not user_id:
-                path_parts = t_dir.replace("\\", "/").split("/")
-                if "users" in path_parts:
-                    u_idx = path_parts.index("users")
-                    if u_idx + 1 < len(path_parts):
-                        user_id = path_parts[u_idx + 1]
-            if not user_id:
-                user_id = "default_user"
+                # Check for final video
+                final_mp4 = os.path.join(t_dir, "final-1.mp4")
+                has_video = os.path.exists(final_mp4) and os.path.getsize(final_mp4) > 1024
+                video_url = f"{base_url}/api/bangai/download/{task_id}/final-1.mp4" if has_video else None
 
-            # Determine state with Stale Task Watchdog
-            now_ts = time.time()
-            raw_state = state_data.get("state")
-            task_updated = float(state_data.get("updated_at") or mtime or now_ts)
-            task_age = now_ts - task_updated
+                # Resolve user_id
+                user_id = params.get("user_id") or state_data.get("user_id") or ""
+                if not user_id:
+                    path_parts = t_dir.replace("\\", "/").split("/")
+                    if "users" in path_parts:
+                        u_idx = path_parts.index("users")
+                        if u_idx + 1 < len(path_parts):
+                            user_id = path_parts[u_idx + 1]
+                if not user_id:
+                    user_id = "default_user"
 
-            if has_video:
-                status_str = "completed"
-                progress = 100
-            elif raw_state in (-1, "failed"):
-                status_str = "failed"
-                progress = int(state_data.get("progress", 0) or 0)
-            elif raw_state in (1, "complete"):
-                status_str = "completed"
-                progress = 100
-            elif task_age > 1200:  # 20 minutes without completion
-                status_str = "failed"
-                progress = int(state_data.get("progress", 0) or 0)
-                state_data["state"] = -1
-                state_data["status"] = "failed"
-                state_data["error"] = state_data.get("error") or "Task timed out: worker container terminated or stalled"
-                state_data["failed_stage"] = state_data.get("failed_stage") or "timeout"
-                try:
-                    with open(state_file, "w", encoding="utf-8") as sf:
-                        json.dump(state_data, sf, default=str)
-                except Exception:
-                    pass
-            else:
-                status_str = "rendering"
-                progress = int(state_data.get("progress", 10) or 10)
+                # Determine state with Stale Task Watchdog
+                raw_state = state_data.get("state")
+                raw_updated = state_data.get("updated_at")
+                task_updated = mtime
+                if raw_updated:
+                    try:
+                        task_updated = float(raw_updated)
+                    except (ValueError, TypeError):
+                        task_updated = mtime
+                task_age = now_ts - task_updated
 
-            # Credit Mode detection:
-            # If user has toggled Bang API Credits or no BYOK custom keys are present
-            has_custom_keys = bool(params.get("gemini_api_key") or params.get("openai_api_key") or params.get("pexels_api_keys") or params.get("elevenlabs_api_key"))
-            is_bang_credits = bool(params.get("use_bangai_credits") or params.get("bang_api_credits") or params.get("use_bang_material_credits") or not has_custom_keys)
+                if has_video:
+                    status_str = "completed"
+                    progress = 100
+                elif raw_state in (-1, "failed"):
+                    status_str = "failed"
+                    progress = int(state_data.get("progress", 0) or 0)
+                elif raw_state in (1, "complete"):
+                    status_str = "completed"
+                    progress = 100
+                elif task_age > 1200:  # 20 minutes without completion
+                    status_str = "failed"
+                    progress = int(state_data.get("progress", 0) or 0)
+                    state_data["state"] = -1
+                    state_data["status"] = "failed"
+                    state_data["error"] = state_data.get("error") or "Task timed out: worker container terminated or stalled"
+                    state_data["failed_stage"] = state_data.get("failed_stage") or "timeout"
+                    try:
+                        with open(state_file, "w", encoding="utf-8") as sf:
+                            json.dump(state_data, sf, default=str)
+                    except Exception:
+                        pass
+                else:
+                    status_str = "rendering"
+                    progress = int(state_data.get("progress", 10) or 10)
 
-            mtime = os.path.getmtime(t_dir) if os.path.exists(t_dir) else time.time()
-            created_ts = state_data.get("updated_at") or mtime
-            if isinstance(created_ts, (int, float)) and created_ts < 2000000000:
-                created_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(created_ts))
-            else:
-                created_iso = str(created_ts)
+                # Credit Mode detection:
+                # If user has toggled Bang API Credits or no BYOK custom keys are present
+                has_custom_keys = bool(params.get("gemini_api_key") or params.get("openai_api_key") or params.get("pexels_api_keys") or params.get("elevenlabs_api_key"))
+                is_bang_credits = bool(params.get("use_bangai_credits") or params.get("bang_api_credits") or params.get("use_bang_material_credits") or not has_custom_keys)
 
-            subject = params.get("video_subject") or script_data.get("script", "")[:45] or state_data.get("video_subject") or f"Stock Studio Video #{task_id[:8]}"
+                created_ts = state_data.get("updated_at") or mtime
+                if isinstance(created_ts, (int, float)) and created_ts < 2000000000:
+                    created_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(created_ts))
+                else:
+                    created_iso = str(created_ts)
 
-            yt_url = state_data.get("youtube_url") or params.get("youtube_url") or ""
-            yt_ch_title = state_data.get("youtube_channel_title") or params.get("user_youtube_channel_title") or ""
-            yt_ch_id = state_data.get("youtube_channel_id") or params.get("user_youtube_channel_id") or ""
+                subject = params.get("video_subject") or script_data.get("script", "")[:45] or state_data.get("video_subject") or f"Stock Studio Video #{task_id[:8]}"
 
-            tasks_list.append({
-                "id": task_id,
-                "task_id": task_id,
-                "title": subject,
-                "userId": user_id,
-                "status": status_str,
-                "progress": progress,
-                "currentStep": state_data.get("step") or state_data.get("failed_stage") or ("Render Complete" if has_video else "Processing Pipeline..."),
-                "error": state_data.get("error", ""),
-                "failedStage": state_data.get("failed_stage", ""),
-                "videoUrl": video_url,
-                "videos": [video_url] if video_url else [],
-                "youtube_url": yt_url,
-                "youtubeUrl": yt_url,
-                "youtube_channel_title": yt_ch_title,
-                "youtube_channel_id": yt_ch_id,
-                "createdAt": created_iso,
-                "mtime": mtime,
-                "creditMode": "bang_credits" if is_bang_credits else "byok",
-                "settings": {
-                    "video_subject": subject,
-                    "video_language": params.get("video_language") or state_data.get("video_language") or "hi-IN",
-                    "video_aspect": params.get("video_aspect", "9:16"),
-                    "video_source": params.get("video_source", "pexels"),
-                    "voice_provider": params.get("voice_provider", "ElevenLabs / json2video"),
-                    "voice_name": params.get("voice_name", "Adam"),
-                    "voice_speed": params.get("voice_speed", 1.1),
-                    "script_engine": params.get("llm_provider", "gemini"),
-                    "script_model": params.get("llm_model", "gemini-2.5-flash"),
-                    "match_materials_to_script": bool(params.get("match_materials_to_script", True)),
-                    "auto_timeline_sync": bool(params.get("auto_timeline_sync", True)),
-                    "paragraph_number": params.get("paragraph_number", 2),
-                    "subtitle_preset": params.get("subtitle_preset", "mrbeast-viral"),
-                    "font_size": params.get("font_size", 60),
-                    "bgm_volume": params.get("bgm_volume", 0.08),
-                    "duration": state_data.get("duration") or 60
-                }
-            })
+                yt_url = state_data.get("youtube_url") or params.get("youtube_url") or ""
+                yt_ch_title = state_data.get("youtube_channel_title") or params.get("user_youtube_channel_title") or ""
+                yt_ch_id = state_data.get("youtube_channel_id") or params.get("user_youtube_channel_id") or ""
+
+                tasks_list.append({
+                    "id": task_id,
+                    "task_id": task_id,
+                    "title": subject,
+                    "userId": user_id,
+                    "status": status_str,
+                    "progress": progress,
+                    "currentStep": state_data.get("step") or state_data.get("failed_stage") or ("Render Complete" if has_video else "Processing Pipeline..."),
+                    "error": state_data.get("error", ""),
+                    "failedStage": state_data.get("failed_stage", ""),
+                    "videoUrl": video_url,
+                    "videos": [video_url] if video_url else [],
+                    "youtube_url": yt_url,
+                    "youtubeUrl": yt_url,
+                    "youtube_channel_title": yt_ch_title,
+                    "youtube_channel_id": yt_ch_id,
+                    "createdAt": created_iso,
+                    "mtime": mtime,
+                    "creditMode": "bang_credits" if is_bang_credits else "byok",
+                    "settings": {
+                        "video_subject": subject,
+                        "video_language": params.get("video_language") or state_data.get("video_language") or "hi-IN",
+                        "video_aspect": params.get("video_aspect", "9:16"),
+                        "video_source": params.get("video_source", "pexels"),
+                        "voice_provider": params.get("voice_provider", "ElevenLabs / json2video"),
+                        "voice_name": params.get("voice_name", "Adam"),
+                        "voice_speed": params.get("voice_speed", 1.1),
+                        "script_engine": params.get("llm_provider", "gemini"),
+                        "script_model": params.get("llm_model", "gemini-2.5-flash"),
+                        "match_materials_to_script": bool(params.get("match_materials_to_script", True)),
+                        "auto_timeline_sync": bool(params.get("auto_timeline_sync", True)),
+                        "paragraph_number": params.get("paragraph_number", 2),
+                        "subtitle_preset": params.get("subtitle_preset", "mrbeast-viral"),
+                        "font_size": params.get("font_size", 60),
+                        "bgm_volume": params.get("bgm_volume", 0.08),
+                        "duration": state_data.get("duration") or 60
+                    }
+                })
+            except Exception as task_err:
+                logger.error(f"Error parsing task {task_id}: {task_err}")
+                continue
 
         tasks_list.sort(key=lambda x: x.get("mtime", 0), reverse=True)
         return {"status": 200, "data": {"tasks": tasks_list[:limit], "total": len(tasks_list)}}
@@ -550,7 +561,13 @@ def serve():
                     
                     # Watchdog check for stale tasks
                     raw_st = state_data.get("state")
-                    task_updated = float(state_data.get("updated_at") or os.path.getmtime(state_file) or time.time())
+                    raw_up = state_data.get("updated_at")
+                    task_updated = os.path.getmtime(state_file) if os.path.exists(state_file) else time.time()
+                    if raw_up:
+                        try:
+                            task_updated = float(raw_up)
+                        except (ValueError, TypeError):
+                            pass
                     if raw_st not in (-1, "failed", 1, "complete") and (time.time() - task_updated > 1200):
                         state_data["state"] = -1
                         state_data["status"] = "failed"
