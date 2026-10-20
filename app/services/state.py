@@ -27,15 +27,15 @@ return 1
 # Base class for state management
 class BaseState(ABC):
     @abstractmethod
-    def update_task(self, task_id: str, state: int, progress: int = 0, **kwargs):
+    def update_task(self, task_id: str, state: Union[int, str] = const.TASK_STATE_PROCESSING, progress: int = 0, **kwargs):
         pass
 
     @abstractmethod
-    def get_task(self, task_id: str):
+    def get_task(self, task_id: str) -> Any:
         pass
 
     @abstractmethod
-    def get_all_tasks(self, page: int, page_size: int):
+    def get_all_tasks(self, page: int, page_size: int) -> tuple[list, int]:
         pass
 
     @abstractmethod
