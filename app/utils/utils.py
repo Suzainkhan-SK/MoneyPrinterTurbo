@@ -87,6 +87,8 @@ def normalize_clip_speed(value, default: float = 1.0) -> float:
 
 
 def root_dir():
+    if os.path.isdir("/root/storage") or os.environ.get("MODAL_IMAGE_ID") or os.environ.get("MODAL_SERVE"):
+        return "/root"
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 
@@ -126,7 +128,18 @@ def storage_dir(sub_dir: str = "", create: bool = False):
     if sub_dir:
         d = os.path.join(d, sub_dir)
     if create and not os.path.exists(d):
-        os.makedirs(d, exist_ok=True)
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError as e:
+            if getattr(e, "errno", None) == 1:
+                try:
+                    import modal
+                    modal.Volume.from_name("bangai-storage").reload()
+                    os.makedirs(d, exist_ok=True)
+                except Exception:
+                    pass
+            else:
+                raise
 
     return d
 
@@ -143,7 +156,18 @@ def task_dir(sub_dir: str = "", create: bool = True, **kwargs):
     if sub_dir:
         d = os.path.join(d, sub_dir)
     if not os.path.exists(d):
-        os.makedirs(d, exist_ok=True)
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError as e:
+            if getattr(e, "errno", None) == 1:
+                try:
+                    import modal
+                    modal.Volume.from_name("bangai-storage").reload()
+                    os.makedirs(d, exist_ok=True)
+                except Exception:
+                    pass
+            else:
+                raise
     return d
 
 

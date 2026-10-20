@@ -13,7 +13,7 @@ from loguru import logger
 from app import __version__
 from app.utils import utils
 
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+root_dir = "/root" if (os.path.isdir("/root/storage") or os.environ.get("MODAL_IMAGE_ID") or os.environ.get("MODAL_SERVE")) else os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 config_file = f"{root_dir}/config.toml"
 
 # When deployed on cloud containers (e.g. Modal with /root/storage mounted),
@@ -749,7 +749,18 @@ def switch_user_config(user_id: str):
     _current_active_user_id = clean_uid
 
     user_storage = os.path.join(root_dir, "storage", "users", clean_uid)
-    os.makedirs(user_storage, exist_ok=True)
+    try:
+        os.makedirs(user_storage, exist_ok=True)
+    except OSError as e:
+        if getattr(e, "errno", None) == 1:
+            try:
+                import modal
+                modal.Volume.from_name("bangai-storage").reload()
+                os.makedirs(user_storage, exist_ok=True)
+            except Exception:
+                pass
+        else:
+            raise
     user_config = os.path.join(user_storage, "config.toml")
 
     with _user_registry_lock:
@@ -880,7 +891,19 @@ def save_config(user_id: str | None = None):
 
         temp_path = ""
         try:
-            os.makedirs(os.path.dirname(target_file), exist_ok=True)
+            target_dir = os.path.dirname(target_file)
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+            except OSError as e:
+                if getattr(e, "errno", None) == 1:
+                    try:
+                        import modal
+                        modal.Volume.from_name("bangai-storage").reload()
+                        os.makedirs(target_dir, exist_ok=True)
+                    except Exception:
+                        pass
+                else:
+                    raise
             fd, temp_path = tempfile.mkstemp(
                 prefix=".config-",
                 suffix=".toml.tmp",
