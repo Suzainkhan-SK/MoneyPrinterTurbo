@@ -233,61 +233,33 @@ def submit_generation(
             user_id=utils.get_current_user_id() or "guest",
         )
 
-    dispatched_to_cloud = False
-
-    # 1. Direct Modal worker spawn if running inside Modal environment
     try:
-        from modal_app import render_task_worker
-        render_task_worker.spawn(task_id, task_params.model_dump(), "video")
-        dispatched_to_cloud = True
-        logger.info(f"Modal Cloud: Successfully dispatched task {task_id} to dedicated cloud worker (render_task_worker.spawn)")
-    except Exception as me:
-        logger.debug(f"Direct modal_app.render_task_worker spawn notice: {me}")
-
-    # 2. Cluster HTTP endpoint dispatch fallback
-    if not dispatched_to_cloud:
-        try:
-            import requests
-            cluster_url = os.environ.get("MODAL_SERVE_URL") or "https://cmpunktg--bangai-stock-studio-serve.modal.run"
-            res = requests.post(
-                f"{cluster_url}/api/bangai/generate",
-                json={**task_params.model_dump(), "task_id": task_id, "stop_at": "video"},
-                timeout=5
-            )
-            if res.ok:
-                dispatched_to_cloud = True
-                logger.info(f"Modal Cloud: Dispatched task {task_id} via cluster HTTP endpoint {cluster_url}")
-        except Exception as he:
-            logger.debug(f"Modal cluster HTTP dispatch notice: {he}")
-
-    # 3. Local execution fallback (for offline or non-Modal development)
-    if not dispatched_to_cloud:
-        try:
-            _task_manager.add_task(
-                _run_generation,
-                task_id=task_id,
-                params=task_params,
-                capture_logs=capture_logs,
-                voice_preview=voice_preview_snapshot,
-                loomloom_video_request=loomloom_request_snapshot,
-                voxcpm_reference_audio=voxcpm_reference_audio_snapshot,
-                voxcpm_prompt_audio=voxcpm_prompt_audio_snapshot,
-                voxcpm_prompt_text=voxcpm_prompt_text_snapshot,
-            )
-        except Exception as exc:
-            with _queued_lock:
-                if task_id in _queued_task_ids:
-                    _queued_task_ids.remove(task_id)
-            _refresh_queued_positions()
-            error = f"{type(exc).__name__}: {exc}"
-            sm.state.update_task(
-                task_id,
-                state=const.TASK_STATE_FAILED,
-                progress=0,
-                failed_stage="scheduling",
-                error=error,
-            )
-            logger.exception(
-                f"failed to submit WebUI generation task, task_id={task_id}, error={exc}"
-            )
-            raise
+        _task_manager.add_task(
+            _run_generation,
+            task_id=task_id,
+            params=task_params,
+            capture_logs=capture_logs,
+            voice_preview=voice_preview_snapshot,
+            loomloom_video_request=loomloom_request_snapshot,
+            voxcpm_reference_audio=voxcpm_reference_audio_snapshot,
+            voxcpm_prompt_audio=voxcpm_prompt_audio_snapshot,
+            voxcpm_prompt_text=voxcpm_prompt_text_snapshot,
+        )
+        logger.info(f"WebUI task {task_id} successfully queued to background worker (real-time terminal streaming active)")
+    except Exception as exc:
+        with _queued_lock:
+            if task_id in _queued_task_ids:
+                _queued_task_ids.remove(task_id)
+        _refresh_queued_positions()
+        error = f"{type(exc).__name__}: {exc}"
+        sm.state.update_task(
+            task_id,
+            state=const.TASK_STATE_FAILED,
+            progress=0,
+            failed_stage="scheduling",
+            error=error,
+        )
+        logger.exception(
+            f"failed to submit WebUI generation task, task_id={task_id}, error={exc}"
+        )
+        raise

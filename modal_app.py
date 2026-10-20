@@ -515,27 +515,20 @@ def serve():
                         task_updated = mtime
                 task_age = now_ts - task_updated
 
+                # Purge failed/timed-out tasks from volume storage - keep only successful tasks
+                if not has_video and (raw_state in (-1, "failed") or task_age > 1200):
+                    try:
+                        shutil.rmtree(t_dir, ignore_errors=True)
+                    except Exception:
+                        pass
+                    continue
+
                 if has_video:
                     status_str = "completed"
                     progress = 100
-                elif raw_state in (-1, "failed"):
-                    status_str = "failed"
-                    progress = int(state_data.get("progress", 0) or 0)
                 elif raw_state in (1, "complete"):
                     status_str = "completed"
                     progress = 100
-                elif task_age > 1200:  # 20 minutes without completion
-                    status_str = "failed"
-                    progress = int(state_data.get("progress", 0) or 0)
-                    state_data["state"] = -1
-                    state_data["status"] = "failed"
-                    state_data["error"] = state_data.get("error") or "Task timed out: worker container terminated or stalled"
-                    state_data["failed_stage"] = state_data.get("failed_stage") or "timeout"
-                    try:
-                        with open(state_file, "w", encoding="utf-8") as sf:
-                            json.dump(state_data, sf, default=str)
-                    except Exception:
-                        pass
                 else:
                     status_str = "rendering"
                     progress = int(state_data.get("progress", 10) or 10)
@@ -598,6 +591,11 @@ def serve():
             except Exception as task_err:
                 logger.error(f"Error parsing task {task_id}: {task_err}")
                 continue
+
+        try:
+            volume.commit()
+        except Exception:
+            pass
 
         tasks_list.sort(key=lambda x: x.get("mtime", 0), reverse=True)
         return {"status": 200, "data": {"tasks": tasks_list[:limit], "total": len(tasks_list)}}
@@ -683,6 +681,98 @@ def serve():
             return {"status": 200, "data": {"state": "processing", "progress": 20, "task_id": task_id, "step": "Generating AI script..."}}
         else:
             return {"status": 200, "data": {"state": "processing", "progress": 10, "task_id": task_id, "step": "Task queued..."}}
+
+    @bangai_router.post("/clear-cache")
+    async def bangai_clear_cache():
+        import glob
+        import shutil
+        import time
+        volume.reload()
+        
+        purged_failed = 0
+        deleted_cache_files = 0
+        reclaimed_bytes = 0
+        
+        # 1. Clean video material caches
+        cache_dir = "/root/storage/cache_videos"
+        if os.path.exists(cache_dir):
+            for f in os.listdir(cache_dir):
+                fp = os.path.join(cache_dir, f)
+                try:
+                    if os.path.isfile(fp):
+                        reclaimed_bytes += os.path.getsize(fp)
+                        os.remove(fp)
+                        deleted_cache_files += 1
+                except Exception:
+                    pass
+
+        # 2. Clean temporary directories
+        temp_dir = "/root/storage/temp"
+        if os.path.exists(temp_dir):
+            for f in os.listdir(temp_dir):
+                fp = os.path.join(temp_dir, f)
+                try:
+                    if os.path.isfile(fp):
+                        reclaimed_bytes += os.path.getsize(fp)
+                        os.remove(fp)
+                    elif os.path.isdir(fp):
+                        shutil.rmtree(fp, ignore_errors=True)
+                except Exception:
+                    pass
+
+        # 3. Purge all failed or stalled task directories completely
+        user_task_dirs = glob.glob("/root/storage/users/*/tasks/*")
+        global_task_dirs = glob.glob("/root/storage/tasks/*")
+        all_dirs = list(set(user_task_dirs + global_task_dirs))
+        
+        now_ts = time.time()
+        for t_dir in all_dirs:
+            if not os.path.isdir(t_dir):
+                continue
+            has_video = os.path.exists(os.path.join(t_dir, "final-1.mp4"))
+            state_file = os.path.join(t_dir, "state.json")
+            is_failed = False
+            
+            if not has_video:
+                if os.path.exists(state_file):
+                    try:
+                        with open(state_file, "r", encoding="utf-8") as sf:
+                            st = json.load(sf)
+                            if st.get("state") in (-1, "failed"):
+                                is_failed = True
+                    except Exception:
+                        is_failed = True
+                else:
+                    is_failed = True
+                
+                try:
+                    mtime = os.path.getmtime(t_dir)
+                    if (now_ts - mtime) > 1200:
+                        is_failed = True
+                except Exception:
+                    pass
+            
+            if is_failed and not has_video:
+                try:
+                    shutil.rmtree(t_dir, ignore_errors=True)
+                    purged_failed += 1
+                except Exception:
+                    pass
+                    
+        try:
+            volume.commit()
+        except Exception:
+            pass
+            
+        return {
+            "status": 200,
+            "message": "Caches cleared and failed tasks purged successfully",
+            "data": {
+                "deleted_cache_files": deleted_cache_files,
+                "purged_failed_tasks": purged_failed,
+                "reclaimed_mb": round(reclaimed_bytes / (1024 * 1024), 2)
+            }
+        }
 
     @bangai_router.api_route("/download/{task_id}/{filename}", methods=["GET", "HEAD"])
     async def bangai_download(task_id: str, filename: str):

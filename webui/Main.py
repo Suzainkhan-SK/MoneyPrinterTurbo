@@ -2648,12 +2648,12 @@ def _scan_history_tasks(limit=30):
 
         # Determine actual state from video_file and state.json
         disk_raw_state = state_data.get("state")
+        if not video_file and (disk_raw_state in (const.TASK_STATE_FAILED, "failed", -1) or state_data.get("error")):
+            continue
+
         if video_file:
             task_state = const.TASK_STATE_COMPLETE
             task_progress = 100
-        elif disk_raw_state in (const.TASK_STATE_FAILED, "failed"):
-            task_state = const.TASK_STATE_FAILED
-            task_progress = int(state_data.get("progress", 0) or 0)
         elif disk_raw_state in (const.TASK_STATE_PROCESSING, "processing", "queued"):
             task_state = const.TASK_STATE_PROCESSING
             task_progress = int(state_data.get("progress", 0) or 0)
@@ -2756,7 +2756,10 @@ def _collect_task_summaries(limit=20):
             "source": "active",
         }
 
-    tasks = list(history_tasks.values())
+    tasks = [
+        t for t in history_tasks.values()
+        if _task_state_filter_key(t) != "failed" and t.get("state") not in (-1, const.TASK_STATE_FAILED)
+    ]
     return sorted(tasks, key=lambda item: item["mtime"], reverse=True)[:limit]
 
 

@@ -775,17 +775,32 @@ def _single_tts(
             split_long = config.json2video.get("split_long_audio", True)
             use_cc = config.json2video.get("use_cloudconvert", False)
             cc_key = config.json2video.get("cloudconvert_api_key", "")
-            return json2video_tts(
-                text=text,
-                voice_id=voice_id,
-                voice_file=voice_file,
-                voice_rate=voice_rate,
-                voice_volume=voice_volume,
-                api_key=api_key,
-                split_long_audio=split_long,
-                use_cloudconvert=use_cc,
-                cloudconvert_api_key=cc_key,
-            )
+            try:
+                res = json2video_tts(
+                    text=text,
+                    voice_id=voice_id,
+                    voice_file=voice_file,
+                    voice_rate=voice_rate,
+                    voice_volume=voice_volume,
+                    api_key=api_key,
+                    split_long_audio=split_long,
+                    use_cloudconvert=use_cc,
+                    cloudconvert_api_key=cc_key,
+                )
+                if res is not None:
+                    return res
+            except Exception as j2v_err:
+                logger.warning(f"[Voice] json2video TTS encountered error: {j2v_err}. Engaging automatic high-fidelity fallback so rendering never stops...")
+
+            # Resilient fallback: Determine language and pick best Edge/Azure neural voice so rendering NEVER stops!
+            has_devanagari = any('\u0900' <= char <= '\u097F' for char in text)
+            is_female = any(fem_tag in str(voice_name).lower() for fem_tag in ["female", "swara", "kavya", "woman"])
+            if has_devanagari:
+                fallback_voice = "hi-IN-SwaraNeural" if is_female else "hi-IN-MadhurNeural"
+            else:
+                fallback_voice = "en-US-JennyNeural" if is_female else "en-US-GuyNeural"
+            logger.info(f"[Voice] Fallback to neural voice: {fallback_voice}")
+            return azure_tts_v1(text, fallback_voice, voice_rate, voice_file)
         else:
             logger.error(f"Invalid json2video voice name format: {voice_name}")
             return None
