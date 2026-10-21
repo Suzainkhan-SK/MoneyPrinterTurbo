@@ -47,6 +47,15 @@ def _refresh_queued_positions() -> None:
             )
 
 
+def has_active_tasks() -> bool:
+    """Check if there are any actively rendering or queued tasks in this process."""
+    with _task_manager.lock:
+        if _task_manager.current_tasks > 0:
+            return True
+    with _queued_lock:
+        return len(_queued_task_ids) > 0
+
+
 def _append_task_log(task_id: str, message: str) -> None:
     """按任务保存有限数量的日志，供 Streamlit Fragment 安全轮询。"""
     cleaned = message.rstrip()
@@ -115,11 +124,12 @@ def _run_generation(
 
     task_user_id = params.user_id or utils.get_current_user_id() or "guest"
     utils.set_current_user_id(task_user_id)
-    try:
-        import modal
-        modal.Volume.from_name("bangai-storage").reload()
-    except Exception:
-        pass
+    if not has_active_tasks():
+        try:
+            import modal
+            modal.Volume.from_name("bangai-storage").reload()
+        except Exception:
+            pass
 
     try:
         user_storage_path = os.path.abspath(os.path.join(utils.root_dir(), "storage", "users", task_user_id))
@@ -203,6 +213,10 @@ def _run_generation(
                 logger.debug(
                     f"WebUI task log handler already removed: task_id={task_id}"
                 )
+        try:
+            config.sync_cloud_volume()
+        except Exception:
+            pass
 
 
 def submit_generation(

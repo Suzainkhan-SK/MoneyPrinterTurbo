@@ -31,7 +31,7 @@ class KeyRotator:
         self._pools: Dict[str, List[dict]] = {}
         self._indices: Dict[str, int] = {}
         self._models: Dict[str, str] = {
-            "gemini": "gemini-2.5-flash",
+            "gemini": "gemini-3.5-flash",
             "openai": "gpt-4o",
             "deepseek": "deepseek-chat",
             "groq": "llama-3.3-70b-versatile"

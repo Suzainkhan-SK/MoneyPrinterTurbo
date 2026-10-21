@@ -2628,6 +2628,16 @@ _last_volume_reload_ts = 0.0
 def _maybe_reload_cloud_volume(min_interval=30.0):
     global _last_volume_reload_ts
     import time
+    # NEVER reload volume if a generation task is actively running or queued in this process!
+    # Reloading during active generation wipes uncommitted local files, causes FUSE EPERM,
+    # and corrupts audio/video render pipelines.
+    try:
+        from app.services import webui_task
+        if webui_task.has_active_tasks():
+            return
+    except Exception:
+        pass
+
     now = time.time()
     if now - _last_volume_reload_ts < min_interval:
         return
@@ -4950,7 +4960,6 @@ def _render_generation_task_snapshot(task_id, task):
 @st.fragment(run_every=webui_task.TASK_LOG_REFRESH_INTERVAL_SECONDS)
 def _render_running_generation_task(task_id):
     """只在任务运行期间轮询；结束后切回静态结果，停止不必要的定时刷新。"""
-    _maybe_reload_cloud_volume(min_interval=2.0)
     task = None
     try:
         task = sm.state.get_task(task_id)
@@ -6236,7 +6245,7 @@ def _collect_current_ui_applied_settings():
         "voice_speed": voice_rate,
         "voice_rate": voice_rate,
         "llm_provider": st.session_state.get("llm_provider_select") or saved_params.get("llm_provider") or config.app.get("llm_provider", "gemini"),
-        "llm_model": st.session_state.get("llm_model_select") or saved_params.get("llm_model") or config.app.get("gemini_model", "gemini-2.5-flash"),
+        "llm_model": st.session_state.get("llm_model_select") or saved_params.get("llm_model") or config.app.get("gemini_model", "gemini-3.5-flash"),
         "paragraph_number": int(st.session_state.get("paragraph_number_slider") or saved_params.get("paragraph_number") or config.app.get("paragraph_number", 2)),
         "subtitle_preset": st.session_state.get("subtitle_preset_select") or saved_params.get("subtitle_preset") or "mrbeast-viral",
         "font_name": st.session_state.get("font_name_select") or saved_params.get("font_name") or config.app.get("font_name", ""),

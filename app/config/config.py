@@ -886,31 +886,34 @@ def save_config(user_id: str | None = None):
 
         temp_path = ""
         try:
-            target_dir = os.path.abspath(os.path.dirname(target_file))
+            target_dir = os.path.realpath(os.path.abspath(os.path.dirname(target_file)))
             try:
                 utils.safe_makedirs(target_dir, exist_ok=True)
             except Exception as e:
-                logger.warning(f"safe_makedirs for target_dir note: {e}")
+                logger.debug(f"safe_makedirs for target_dir note: {e}")
 
             write_succeeded = False
-            try:
-                fd, temp_path = tempfile.mkstemp(
-                    prefix=".config-",
-                    suffix=".toml.tmp",
-                    dir=target_dir if os.path.isdir(target_dir) else None,
-                )
-                with os.fdopen(fd, mode="w", encoding="utf-8") as f:
-                    f.write(serialized_config)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(temp_path, target_file)
-                write_succeeded = True
-            except Exception as tmp_err:
-                logger.warning(
-                    f"atomic config replacement via tempfile failed ({tmp_err}), fallback to direct write: {target_file}"
-                )
+            # Only use tempfile if target_dir actually exists on disk
+            if os.path.isdir(target_dir):
+                try:
+                    fd, temp_path = tempfile.mkstemp(
+                        prefix=".config-",
+                        suffix=".toml.tmp",
+                        dir=target_dir,
+                    )
+                    with os.fdopen(fd, mode="w", encoding="utf-8") as f:
+                        f.write(serialized_config)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(temp_path, target_file)
+                    write_succeeded = True
+                except Exception as tmp_err:
+                    logger.debug(
+                        f"atomic config replacement via tempfile failed ({tmp_err}), fallback to direct write: {target_file}"
+                    )
 
             if not write_succeeded:
+                utils.safe_makedirs(os.path.dirname(target_file), exist_ok=True)
                 with open(target_file, mode="w", encoding="utf-8") as f:
                     f.write(serialized_config)
                     f.flush()

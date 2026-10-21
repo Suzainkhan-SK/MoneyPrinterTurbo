@@ -71,6 +71,12 @@ def patch_script_data(task_id: str, **updates: Any) -> bool:
     """
     try:
         target = _script_file(task_id)
+        if not target.is_file():
+            real_t = Path(os.path.realpath(str(target)))
+            if real_t.is_file():
+                target = real_t
+            else:
+                return False
         with target.open("r", encoding="utf-8") as script_file:
             payload = json.load(script_file)
         if not isinstance(payload, dict):

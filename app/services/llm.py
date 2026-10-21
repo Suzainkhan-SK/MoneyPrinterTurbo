@@ -690,6 +690,25 @@ def _generate_response(prompt: str, app_config=None) -> str:
                 key_rotator.report_success("llm", rot_key)
             return res
         except Exception as e:
+            err_str = str(e)
+            # Automatic resilient fallback: if Gemini 2.5 hits free tier 20/day quota, failover to gemini-3.5-flash
+            if llm_provider == "gemini" and ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str):
+                if active_cloud_model != "gemini-3.5-flash":
+                    logger.info("[LLM] Gemini quota rate limit encountered; automatically falling back to 'gemini-3.5-flash'...")
+                    try:
+                        fallback_res = _execute_llm_request_inner(
+                            prompt,
+                            runtime_app_config,
+                            forced_api_key=rot_key,
+                            forced_model_name="gemini-3.5-flash"
+                        )
+                        if fallback_res and isinstance(fallback_res, str) and not fallback_res.startswith("Error:"):
+                            if rot_key:
+                                key_rotator.report_success("llm", rot_key)
+                            return fallback_res
+                    except Exception as fallback_err:
+                        logger.warning(f"[LLM] Gemini fallback to gemini-3.5-flash failed: {fallback_err}")
+
             last_err_msg = f"Error: {_sanitize_error_message(e)}"
             if rot_key:
                 logger.warning(f"[LLM] Key '{rot_label}' failed for '{llm_provider}' ({e}). Reporting to KeyRotator and rotating to next key...")

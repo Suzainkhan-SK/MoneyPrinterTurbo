@@ -95,22 +95,28 @@ def root_dir():
 def safe_makedirs(path: str, exist_ok: bool = True):
     if not path:
         return
-    abs_path = os.path.abspath(str(path).strip())
-    if os.path.isdir(abs_path):
+    clean_path = str(path).strip()
+    abs_path = os.path.abspath(clean_path)
+    real_path = os.path.realpath(abs_path)
+
+    if os.path.isdir(real_path) or os.path.isdir(abs_path):
         return
     # Never attempt to re-create system mount points
-    if abs_path in ("/", "/root", "/root/storage", "/root/storage/"):
+    if (
+        abs_path in ("/", "/root", "/root/storage", "/root/storage/")
+        or real_path in ("/", "/root", "/root/storage", "/root/storage/", "/__modal", "/__modal/volumes")
+    ):
         return
 
-    # Attempt 1: Standard Python os.makedirs
+    # Attempt 1: Standard Python os.makedirs on real canonical path
     try:
-        os.makedirs(abs_path, exist_ok=exist_ok)
+        os.makedirs(real_path, exist_ok=exist_ok)
         return
     except FileExistsError:
         return
     except OSError as e:
         err_no = getattr(e, "errno", None)
-        if os.path.isdir(abs_path):
+        if os.path.isdir(real_path) or os.path.isdir(abs_path):
             return
 
         # Attempt 2: On Linux FUSE Modal Volume mounts, if os.makedirs hits
@@ -121,23 +127,26 @@ def safe_makedirs(path: str, exist_ok: bool = True):
             try:
                 import subprocess
                 subprocess.run(
-                    ["mkdir", "-p", abs_path],
+                    ["mkdir", "-p", real_path],
                     check=False,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                if os.path.isdir(abs_path):
+                if os.path.isdir(real_path) or os.path.isdir(abs_path):
                     return
             except Exception:
                 pass
 
-        if os.path.isdir(abs_path):
+        if os.path.isdir(real_path) or os.path.isdir(abs_path):
             return
 
-        # Suppress benign EPERM notes on Modal storage roots if subpath was created
-        if err_no == 1 and abs_path.startswith("/root/storage"):
-            if os.path.isdir(abs_path):
-                return
+        # Suppress benign EPERM notes on Modal storage roots if subpath was created or already exists
+        if err_no == 1 and (
+            abs_path.startswith("/root/storage")
+            or real_path.startswith("/root/storage")
+            or real_path.startswith("/__modal/volumes")
+        ):
+            return
         logger.warning(f"safe_makedirs note on '{abs_path}': {e}")
 
 

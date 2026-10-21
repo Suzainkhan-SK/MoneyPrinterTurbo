@@ -352,6 +352,10 @@ def save_material_search_cache(
             "version": _CACHE_FORMAT_VERSION,
             "items": serialized_items,
         }
+        utils.safe_makedirs(cache_path.parent, exist_ok=True)
+        if not cache_path.parent.is_dir():
+            return False
+
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
@@ -413,6 +417,8 @@ def cleanup_expired_material_search_cache(
 
     try:
         cache_dir = _cache_dir()
+        if not cache_dir.is_dir():
+            return 0
         entries = os.scandir(cache_dir)
     except Exception as exc:
         logger.warning(

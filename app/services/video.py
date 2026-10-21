@@ -750,6 +750,26 @@ def _fit_clip_to_canvas(
     ).with_duration(clip.duration)
 
 
+def _resolve_existing_media_file(path_str: str) -> str:
+    clean = str(path_str or "").strip()
+    if not clean:
+        return clean
+    real_p = os.path.realpath(os.path.abspath(clean))
+    if os.path.exists(real_p):
+        return real_p
+    abs_p = os.path.abspath(clean)
+    if os.path.exists(abs_p):
+        return abs_p
+    # Quick retry loop in case FUSE volume metadata is settling
+    for _ in range(5):
+        time.sleep(0.3)
+        if os.path.exists(real_p):
+            return real_p
+        if os.path.exists(abs_p):
+            return abs_p
+    return real_p
+
+
 def combine_videos(
     combined_video_path: str,
     video_paths: List[str],
@@ -765,7 +785,8 @@ def combine_videos(
     source_groups: dict[str, str] | None = None,
     used_video_paths: List[str] | None = None,
 ) -> str:
-    audio_clip = AudioFileClip(audio_file)
+    resolved_audio_file = _resolve_existing_media_file(audio_file)
+    audio_clip = AudioFileClip(resolved_audio_file)
     try:
         # 这里只需要读取旁白音频时长来决定素材视频拼接长度；后续不会再使用
         # audio_clip。读取完成后立即关闭，避免早退或异常路径泄漏文件句柄。
@@ -1489,10 +1510,12 @@ def generate_video(
     # ExitStack 显式持有所有原始文件 reader，确保成功、字幕异常、混音失败和
     # 视频写入失败等路径都能释放 FFmpeg 子进程，尤其避免 Windows 文件被占用。
     with ExitStack() as clip_stack:
+        resolved_video_path = _resolve_existing_media_file(video_path)
+        resolved_audio_path = _resolve_existing_media_file(audio_path)
         source_video_clip = clip_stack.enter_context(
-            _open_video_clip_quietly(video_path)
+            _open_video_clip_quietly(resolved_video_path)
         )
-        voice_source_clip = clip_stack.enter_context(AudioFileClip(audio_path))
+        voice_source_clip = clip_stack.enter_context(AudioFileClip(resolved_audio_path))
         video_clip = source_video_clip
         audio_clip = voice_source_clip.with_effects(
             [afx.MultiplyVolume(params.voice_volume)]
